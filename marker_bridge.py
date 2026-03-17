@@ -16,6 +16,8 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from latexfix import LatexFix
+
 app = FastAPI(title="Marker Bridge", version="1.0.0")
 
 # Allow requests from Chrome extensions (moz-extension:// / chrome-extension://)
@@ -66,6 +68,15 @@ async def convert(
         # Run marker conversion
         markdown_text = _run_marker(tmp_path, force_ocr)
 
+        # Apply latexfix to detect and compute LaTeX matrices
+        try:
+            lf = LatexFix.from_text(markdown_text).run()
+            lf.auto_solve()
+            markdown_text = lf.export_text()
+        except Exception as lf_err:
+            print(f"Warning: latexfix failed, returning original markdown. Error: {lf_err}")
+            traceback.print_exc()
+
         # Split into per-page sections if marker inserted page breaks
         page_sections = _split_by_pages(markdown_text)
 
@@ -94,6 +105,21 @@ async def convert(
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+@app.post("/latexfix")
+async def apply_latexfix(markdown: str = Form(...)):
+    """
+    Apply latexfix to a full markdown string and return the computed/fixed markdown.
+    """
+    try:
+        lf = LatexFix.from_text(markdown).run()
+        lf.auto_solve()
+        fixed_markdown = lf.export_text()
+        return JSONResponse({"success": True, "markdown": fixed_markdown})
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
 def _run_marker(filepath: str, force_ocr: bool) -> str:

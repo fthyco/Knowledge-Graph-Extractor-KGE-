@@ -248,9 +248,26 @@ async function processPDFSource(source, title) {
     // Normalize LaTeX: merge fragments, fix Greek, clean matrix placeholders
     md = normalizeLatexOutput(md);
 
+    showProgress('Applying final LaTeX fixes...', 95);
+    await new Promise(r => setTimeout(r, 50));
+    
+    // Final pass through backend latexfix
+    const markerAvailable = await checkMarkerAvailable();
+    if (markerAvailable) {
+      const fixedMd = await fixWithLatexFix(md);
+      if (fixedMd) {
+        md = fixedMd;
+        console.log('[PDF→MD] Applied latexfix successfully.');
+      } else {
+        console.warn('[PDF→MD] latexfix failed, using original markdown.');
+      }
+    } else {
+        console.warn('[PDF→MD] Marker server not available, skipping latexfix.');
+    }
 
     showProgress('Complete!', 100);
     await new Promise(r => setTimeout(r, 300));
+
 
     // Display
     displayResults(md, pages.length);

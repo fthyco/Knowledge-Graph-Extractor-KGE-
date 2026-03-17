@@ -278,7 +278,6 @@ function ensureMathDelimiters(text) {
   let result = text;
 
   // Fix 1: Hybrid pattern — Unicode Greek char(s) immediately before $_{...}$ or $^{...}$
-  // e.g. β$_{j}$ → $\beta_{j}$, β$_{2}$ x$_{2}$ → $\beta_{2}$ $x_{2}$
   result = result.replace(
     /([α-ωΑ-Ω]+)\$([_^]\{[^}]*\})\$/g,
     (match, greek, script) => {
@@ -287,7 +286,6 @@ function ensureMathDelimiters(text) {
   );
 
   // Fix 2: Merge adjacent $...$ blocks with no text between them
-  // e.g. $\beta$ $_{j}$ → $\beta_{j}$
   result = result.replace(
     /\$([^$]+)\$\s*\$([_^]\{[^}]*\})\$/g,
     (match, left, script) => {
@@ -295,14 +293,29 @@ function ensureMathDelimiters(text) {
     }
   );
 
-  // Fix 3: If no $ delimiters at all, wrap bare math expressions
-  if (!/\$[^$]+\$/.test(result)) {
-    const mathExprPattern = /([α-ωΑ-Ω∑∏∫∂∇∞±×÷·≤≥≠≈≡∈∉⊂⊃⊆⊇∪∩∧∨∀∃¬→←↔⇒⇐⇔⊕⊗√∝≺≻≼≽∼≃≪≫⌊⌋⌈⌉⟨⟩−][\w\s^_{},+\-=<>().*α-ωΑ-Ω∑∏∫∂∇∞±×÷·≤≥≠≈≡∈∉⊂⊃⊆⊇∪∩∧∨∀∃¬→←↔⇒⇐⇔⊕⊗√∝]*)/g;
+  // Fix 3: Wrap bare math expressions outside of existing $...$
+  const mathExprPattern = /([α-ωΑ-Ω∑∏∫∂∇∞±×÷·≤≥≠≈≡∈∉⊂⊃⊆⊇∪∩∧∨∀∃¬→←↔⇒⇐⇔⊕⊗√∝≺≻≼≽∼≃≪≫⌊⌋⌈⌉⟨⟩−][\w\s^_{},+\-=<>().*α-ωΑ-Ω∑∏∫∂∇∞±×÷·≤≥≠≈≡∈∉⊂⊃⊆⊇∪∩∧∨∀∃¬→←↔⇒⇐⇔⊕⊗√∝]*)/g;
 
-    result = result.replace(mathExprPattern, (match) => {
-      return '$' + greekToLatex(match).trim() + '$';
-    });
+  const parts = [];
+  let lastIndex = 0;
+  result.replace(/\$[^$]+\$/g, (match, offset) => {
+    if (offset > lastIndex) {
+      let before = result.substring(lastIndex, offset);
+      before = before.replace(mathExprPattern, m => '$' + greekToLatex(m).trim() + '$');
+      parts.push(before);
+    }
+    parts.push(match);
+    lastIndex = offset + match.length;
+    return match;
+  });
+
+  if (lastIndex < result.length) {
+    let after = result.substring(lastIndex);
+    after = after.replace(mathExprPattern, m => '$' + greekToLatex(m).trim() + '$');
+    parts.push(after);
   }
+
+  result = parts.join('');
 
   return result;
 }
@@ -324,14 +337,19 @@ function normalizeLatexOutput(markdown) {
     return '$' + converted.trim() + '$';
   });
 
-  // 2. Merge adjacent $...$ $...$ where second starts with _ or ^
-  // Repeat to handle chains like $a$ $_{1}$ $^{2}$
+  // 2. Merge adjacent $...$ $...$ separated by nothing, spaces, or simple math operators
   let prev = '';
   while (prev !== result) {
     prev = result;
+    // merge blocks where the second starts with ^ or _
     result = result.replace(
       /\$([^$]+)\$\s*\$([_^]\{[^}]*\})\$/g,
       (m, left, script) => '$' + left.trim() + script + '$'
+    );
+    // merge blocks separated by typical math operators or whitespace (excluding newlines)
+    result = result.replace(
+      /\$([^$]+)\$([=+\-<>/()[\]|:,.\ \t]*)\$([^$]+)\$/g,
+      (m, left, sep, right) => '$' + left.trim() + sep + right.trim() + '$'
     );
   }
 

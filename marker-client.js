@@ -88,3 +88,39 @@ async function convertWithMarker(pdfArrayBuffer, pageNumbers = []) {
     return null;
   }
 }
+
+/**
+ * Send assembled Markdown to the Marker Bridge for a final latexfix pass.
+ * @param {string} markdown - the assembled markdown
+ * @returns {Promise<string|null>} - returns the fixed markdown or null on error
+ */
+async function fixWithLatexFix(markdown) {
+  try {
+    const formData = new FormData();
+    formData.append('markdown', markdown);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), MARKER_CONFIG.CONVERT_TIMEOUT);
+
+    const response = await fetch(`${MARKER_CONFIG.BASE_URL}/latexfix`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+        return null;
+    }
+
+    const result = await response.json();
+    if (!result.success) {
+        return null;
+    }
+
+    return result.markdown;
+  } catch (err) {
+    console.error('[Marker] LatexFix error:', err);
+    return null;
+  }
+}
