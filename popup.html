@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF to Markdown</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-text">
+      <h1>PDF / MD</h1>
+      <p>EXTRACT & STRUCTURE</p>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="content">
+
+    <!-- Source Buttons -->
+    <div class="source-section">
+      <button class="btn btn-primary" id="btn-process">
+        PROCESS PDF
+      </button>
+      <div class="file-input-wrapper">
+        <input type="file" id="file-input" accept=".pdf,application/pdf">
+        <button class="btn btn-secondary" id="btn-upload">
+          UPLOAD
+        </button>
+      </div>
+    </div>
+
+    <!-- Error Message -->
+    <div class="error-message" id="error-message"></div>
+
+    <!-- Progress -->
+    <div class="progress-container" id="progress-container">
+      <div class="progress-label">
+        <span id="progress-text" class="processing-text">Extracting text...</span>
+        <span class="progress-percent" id="progress-percent">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-pages">0</div>
+        <div class="stat-label">Pages</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-words">0</div>
+        <div class="stat-label">Words</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="stat-chunks">0</div>
+        <div class="stat-label">Chunks</div>
+      </div>
+    </div>
+
+    <!-- Output -->
+    <div class="output-section" id="output-section">
+      <div class="output-header">
+        <h2>OUTPUT</h2>
+        <div class="output-actions">
+          <button class="btn btn-icon" id="btn-copy" title="Copy to clipboard">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="0" ry="0"/><path d="M5 15H4a2 2 0 0 1-0-0V4a2 2 0 0 1 0-0h9a2 2 0 0 1 0 0v1"/></svg>
+          </button>
+          <button class="btn btn-icon" id="btn-download" title="Download .md file">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <textarea class="output-textarea" id="output-textarea" readonly placeholder="Processed markdown will appear here..."></textarea>
+
+      <!-- Chunk Navigation -->
+      <div class="chunk-nav" id="chunk-nav">
+        <button class="btn btn-icon chunk-btn" id="btn-prev-chunk" title="Previous chunk">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span id="chunk-indicator">Chunk 1 / 1</span>
+        <button class="btn btn-icon chunk-btn" id="btn-next-chunk" title="Next chunk">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Bottom Actions -->
+    <div class="bottom-actions" id="bottom-actions">
+      <button class="btn btn-success" id="btn-copy-all">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="0" ry="0"/><path d="M5 15H4a2 2 0 0 1-0-0V4a2 2 0 0 1 0-0h9a2 2 0 0 1 0 0v1"/></svg>
+        Copy All
+      </button>
+      <button class="btn btn-chatgpt" id="btn-chatgpt">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Open in ChatGPT
+      </button>
+    </div>
+
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Scripts -->
+  <script src="lib/pdf.min.js"></script>
+  <script src="math-utils.js"></script>
+  <script src="parser.js"></script>
+  <script src="layout.js"></script>
+  <script src="markdown.js"></script>
+  <script src="marker-client.js"></script>
+  <script src="popup.js"></script>
+
+</body>
+</html>
