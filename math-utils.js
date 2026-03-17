@@ -15,9 +15,6 @@ const MATH_FONT_PATTERNS = [
   /^CMM[IR]/i,        // CMMI (Math Italic), CMMR
   /^CMSY/i,           // CM Symbols
   /^CMEX/i,           // CM Extended (large operators)
-  /^CMR\d/i,          // CM Roman (used in math mode)
-  /^CMBX/i,           // CM Bold Extended
-  /^CMTI/i,           // CM Text Italic (sometimes math)
   // AMS fonts
   /^MSAM/i,           // AMS Symbol A
   /^MSBM/i,           // AMS Symbol B
@@ -497,10 +494,10 @@ function normalizeText(text) {
  * Configuration for super/subscript detection.
  */
 const SCRIPT_CONFIG = {
-  SIZE_RATIO: 0.82,        // Item fontSize < baseline * ratio → is a script
-  SUPER_Y_THRESHOLD: -1,   // Y offset above baseline to count as superscript
-  SUB_Y_THRESHOLD: 2,      // Y offset below baseline to count as subscript
-  MAX_X_GAP: 3,            // Max horizontal gap to attach script to base
+  SIZE_RATIO: 0.88,        // Item fontSize < baseline * ratio → is a script
+  SUPER_Y_THRESHOLD: -0.5, // Y offset above baseline to count as superscript
+  SUB_Y_THRESHOLD: 0.5,    // Y offset below baseline to count as subscript
+  MAX_X_GAP: 5,            // Max horizontal gap to attach script to base
 };
 
 /**
@@ -694,7 +691,14 @@ function formatMathLine(items) {
 function containsMathSymbols(text) {
   if (!text) return false;
   // Greek letters, math operators, arrows, etc.
-  return /[α-ωΑ-Ω∑∏∫∂∇∞±×÷·≤≥≠≈≡∈∉⊂⊃⊆⊇∪∩∧∨∀∃¬→←↔⇒⇐⇔⊕⊗√∝≺≻≼≽∼≃≪≫⌊⌋⌈⌉⟨⟩]/.test(text);
+  if (/[α-ωΑ-Ω∑∏∫∂∇∞±×÷·≤≥≠≈≡∈∉⊂⊃⊆⊇∪∩∧∨∀∃¬→←↔⇒⇐⇔⊕⊗√∝≺≻≼≽∼≃≪≫⌊⌋⌈⌉⟨⟩]/.test(text)) return true;
+  
+  // LaTeX commands (\beta, \frac) or matrix placeholders
+  if (/\\[a-zA-Z]+/.test(text) || text.includes('<!-- matrix omitted -->') || text.includes('□')) {
+    return true;
+  }
+  
+  return false;
 }
 
 // ─── Diagnostics ────────────────────────────────────────────────

@@ -151,16 +151,20 @@ function computeAvgLineGap(lines) {
  * @returns {{isHeading: boolean, level: number}}
  */
 function classifyHeading(line, medianFontSize, avgLineGap, gapBefore) {
+  const lineText = line.map(it => it.text).join(' ').trim();
+  
+  // Hard rule: if it looks like a list item or is too long, it's not a heading
+  if (detectListItem(lineText).isList || lineText.length > 150) {
+      return { isHeading: false, level: 0 };
+  }
+
   const maxFontSize = Math.max(...line.map(it => it.fontSize));
   const allBold = line.every(it => it.isBold);
   const largeFont = maxFontSize > medianFontSize * LAYOUT_CONFIG.HEADING_SIZE_RATIO;
+  
+  // If we rely on bold alone, it must have a significant gap before it to avoid breaking sentences
   const bigGap = gapBefore !== null && gapBefore > avgLineGap * LAYOUT_CONFIG.HEADING_GAP_RATIO;
-  const lineText = line.map(it => it.text).join(' ').trim();
-
-  // Skip very long lines (probably paragraphs, not headings)
-  if (lineText.length > 200) return { isHeading: false, level: 0 };
-
-  const isHeading = largeFont || (allBold && lineText.length < 100) || (bigGap && allBold);
+  const isHeading = largeFont || (allBold && bigGap && lineText.length < 100);
 
   if (!isHeading) return { isHeading: false, level: 0 };
 
@@ -168,7 +172,7 @@ function classifyHeading(line, medianFontSize, avgLineGap, gapBefore) {
   const ratio = maxFontSize / medianFontSize;
   let level;
   if (ratio > 1.8) level = 1;
-  else if (ratio > 1.4) level = 2;
+  else if (ratio > 1.35) level = 2;
   else level = 3;
 
   return { isHeading: true, level };
@@ -234,8 +238,8 @@ function identifyNoise(pages) {
     }
   }
 
-  // Add standalone page numbers
-  const pageNumRegex = /^\s*\d{1,4}\s*$/;
+  // Add standalone page numbers or "Page X of Y" / "X / Y"
+  const pageNumRegex = /^\s*(?:Page\s+)?\d{1,4}\s*(?:(?:of|\/)\s*\d{1,4})?\s*$/i;
   pages.forEach(page => {
     page.items.forEach(item => {
       if (pageNumRegex.test(item.text.trim())) {

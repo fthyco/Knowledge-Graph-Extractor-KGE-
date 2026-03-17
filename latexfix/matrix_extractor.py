@@ -72,8 +72,7 @@ def extract_table_matrix(raw: str) -> Optional[np.ndarray]:
     """
     Parse a Markdown-table matrix (Pattern 2) into an ``np.ndarray``.
 
-    Strips ``|``, ``=``, ``□`` and separator rows, then parses
-    numbers from each remaining row.
+    Splits by ``|`` to preserve column structure. Empty cells result in 0.0.
     """
     rows = []
     for line in raw.split('\n'):
@@ -83,9 +82,28 @@ def extract_table_matrix(raw: str) -> Optional[np.ndarray]:
         # Skip separator rows  (| --- | --- |)
         if re.match(r'^\|[\s|:\-_]*\|$', line):
             continue
-        nums = _parse_numbers(line)
-        if nums:
-            rows.append(nums)
+        
+        # Split by | and ignore the outer empty splits
+        parts = line.split('|')
+        cells = []
+        if len(parts) > 2:
+            for i in range(1, len(parts) - 1):
+                cells.append(parts[i])
+        else:
+            cells = parts
+        
+        row_nums = []
+        has_content = False
+        for cell in cells:
+            nums = _parse_numbers(cell)
+            if nums:
+                row_nums.append(nums[0]) # take the first number in the cell
+                has_content = True
+            else:
+                row_nums.append(0.0) # placeholder for empty/garbled cell
+                
+        if has_content:
+            rows.append(row_nums)
 
     if not rows:
         return None

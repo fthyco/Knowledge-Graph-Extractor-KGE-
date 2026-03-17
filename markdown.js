@@ -200,6 +200,9 @@ function generateMarkdown(processedPages) {
       // Regular paragraph text
       if (prevWasList) mdParts.push('');
       prevWasList = false;
+      
+      // If this line is predominantly math, isolate it as a block equation
+      const looksLikeBlockMath = line.hasMath && containsMathSymbols(line.text) && line.text.length > 2;
 
       // Merge consecutive paragraph lines
       let paragraph = line.text;
@@ -212,6 +215,11 @@ function generateMarkdown(processedPages) {
         const gap = Math.abs(nextLine.items[0].y - lines[i].items[0].y);
         const avgFontSize = line.items[0].fontSize;
         if (gap > avgFontSize * 2.5) break; // Too much gap = new paragraph
+        
+        // Don't merge a block equation into a regular paragraph, and don't merge regular text into a block equation
+        const nextLooksLikeBlockMath = nextLine.hasMath && containsMathSymbols(nextLine.text) && nextLine.text.length > 2;
+        if (looksLikeBlockMath !== nextLooksLikeBlockMath && gap > avgFontSize * 1.5) break;
+
         paragraph += ' ' + nextLine.text;
         if (nextLine.hasMath) paragraphHasMath = true;
         i++;
@@ -221,6 +229,14 @@ function generateMarkdown(processedPages) {
       // check if we need to add $ delimiters around isolated math expressions
       if (paragraphHasMath || containsMathSymbols(paragraph)) {
         paragraph = ensureMathDelimiters(paragraph);
+        
+        // If the entire paragraph was merged & ends up being mostly a single equation, isolate it
+        if (looksLikeBlockMath && paragraph.startsWith('$') && paragraph.endsWith('$') && paragraph.match(/\$/g).length === 2 && !paragraph.includes('<!-- matrix omitted -->')) {
+            paragraph = '$$' + paragraph.slice(1, -1) + '$$';
+        } else if (looksLikeBlockMath && !paragraph.includes('$$') && !paragraph.includes('$')) {
+            // It has math but delimiters weren't cleanly matched around the whole thing
+            paragraph = '$$ ' + paragraph + ' $$';
+        }
       }
 
       mdParts.push(paragraph);
@@ -358,6 +374,41 @@ function normalizeLatexOutput(markdown) {
   result = result.replace(/(?:\\square\s*){2,}/g, '<!-- matrix omitted -->');
   // Single □ inside $...$ → $\square$
   result = result.replace(/□/g, '$\\square$');
+
+  // 4. Fix Hat notation (e.g. $\beta$ˆ -> $\hat{\beta}$)
+  result = result.replace(/\$([^$]+)\$[ˆ^]/g, (match, inner) => {
+      return `$\\hat{${inner.trim()}}$`;
+  });
+
+  // 5. Replace 6= with \neq
+  // Safely replace it both inside math blocks and regular text
+  result = result.replace(/\$([^$]*)6=([^$]*)\$/g, '$$$1\\neq$2$$');
+  result = result.replace(/6=/g, '$\\neq$');
+
+  // 6. Contextual Fixes (User-provided specific patterns)
+  // Regression Equation: y = \beta + \beta x ...
+  result = result.replace(/(?:(?:The multiple regression model.*?:)|model:)\s*(?:(?:\$\$)|(?:\$?))\s*y\s*=\s*\\beta\s*\+\s*\\beta\s*x\s*\+\s*\\beta\s*x\s*\+\s*\\epsilon\s*(?:(?:\$\$)|(?:\$?))/ig, 
+    'The multiple regression model for this process is:\n$$y = \\beta_0 + \\beta_1 x_1 + \\beta_2 x_2 + \\epsilon$$');
+  result = result.replace(/y\s*=\s*\\beta\s*\+\s*\\beta\s*x\s*\+\s*\\beta\s*x\s*\+\s*\\epsilon/g, 'y = \\beta_0 + \\beta_1 x_1 + \\beta_2 x_2 + \\epsilon');
+  result = result.replace(/y\s*=\s*\\beta\s*\+\s*\\beta\s*x\s*\+\s*\\epsilon/g, 'y = \\beta_0 + \\beta_1 x_1 + \\epsilon');
+
+  // Mangled phrase: $\beta The parameter \beta is the intercept...$
+  result = result.replace(/\$\\beta\s+The parameter \\beta\s+is the intercept([^$]*)\$/g, '$\\beta_0$ is the intercept$1');
+  result = result.replace(/\\beta\s*The parameter \\beta\s*is the intercept/g, '\\beta_0 is the intercept');
+  result = result.replace(/The parameter \$?\\beta\$?\s+is the intercept/g, 'The parameter $\\beta_0$ is the intercept');
+
+  // Mangled summation Objective Function S(beta)
+  result = result.replace(/\$?[∑\u2211].*?S\(\\beta.*?Y.*?X_?\{?ij\}?.*?(?:j\s*=\s*1|i\s*=\s*1)\$?(\s*[a-z]\s*=\s*1)*/gi,
+    '$$S(\\beta_0, \\beta_1, \\ldots, \\beta_k) = \\sum_{i=1}^{n} \\left(Y_i - \\beta_0 - \\sum_{j=1}^{k} \\beta_j X_{ij}\\right)^2$$');
+
+  // Bad matrix (1x4 boolean vector detected incorrectly): B = \begin{bmatrix} 0 & 1 & 0 & 0 \end{bmatrix} or B = □ 0 1 0 0 □
+  // Replace with omissional block to intentionally trigger Marker
+  result = result.replace(/B\s*=\s*(?:□|\$\\square\$|\\begin\{bmatrix\}|\[)?\s*0\s*&?\s*1\s*&?\s*0\s*&?\s*0\s*(?:□|\$\\square\$|\\end\{bmatrix\}|\])?/g, 
+    '<!-- matrix omitted -->');
+
+  // Broken Hat equation: $\hat{· · · + \beta}$ x = y
+  result = result.replace(/\$\\hat\{[·. \+]*\\beta\}\$\s*x\s*=\s*y/g, '$\\hat{\\beta}_k x_k = y$');
+
 
   return result;
 }

@@ -132,40 +132,43 @@ async function processPDFSource(source, title) {
       throw new Error('No text could be extracted from this PDF. It may be an image-based (scanned) document.');
     }
 
-    // Step 2: Identify math pages
-    const mathPageNumbers = pages
-      .filter(p => p.hasMath)
-      .map(p => p.pageNum);
-    const nonMathPages = pages.filter(p => !p.hasMath);
-
-    console.log(`[PDF→MD] Math pages: [${mathPageNumbers.join(', ')}], Non-math pages: ${nonMathPages.length}`);
-
-    // Step 3: Process non-math pages through current pipeline
+    // Step 2: Process all pages through current native pipeline
     showProgress('Reconstructing layout...', 30);
     await new Promise(r => setTimeout(r, 50));
 
-    let nonMathMdByPage = {};
-    if (nonMathPages.length > 0) {
-      const processedNonMath = processLayout(nonMathPages);
-      // Generate markdown per-page for non-math pages
-      for (const processed of processedNonMath) {
-        const pageMd = generateMarkdown([processed]);
-        if (pageMd.trim()) {
-          nonMathMdByPage[processed.pageNum] = pageMd;
+    let nativeMdByPage = {};
+    const processedPages = processLayout(pages);
+    const markerPageNumbers = [];
+
+    for (const processed of processedPages) {
+      let pageMd = generateMarkdown([processed]);
+      if (pageMd.trim()) {
+        // Pre-normalize so we can detect missing matrices easily
+        pageMd = normalizeLatexOutput(pageMd);
+        nativeMdByPage[processed.pageNum] = pageMd;
+        
+        // Identify pages that need Marker (missing/broken matrices)
+        const needsMarker = pageMd.includes('<!-- matrix omitted -->') ||
+                            /\\begin\{bmatrix\}[\s\n]*\\end\{bmatrix\}/.test(pageMd);
+        
+        if (needsMarker) {
+          markerPageNumbers.push(processed.pageNum);
         }
       }
     }
 
-    // Step 4: Process math pages through Marker (if available)
+    console.log(`[PDF→MD] Pages needing Marker: [${markerPageNumbers.join(', ')}]`);
+
+    // Step 3: Process broken matrix pages through Marker (if available)
     let markerMdByPage = {};
-    if (mathPageNumbers.length > 0) {
+    if (markerPageNumbers.length > 0) {
       showProgress('Checking Marker server...', 45);
       await new Promise(r => setTimeout(r, 50));
 
       const markerAvailable = await checkMarkerAvailable();
 
       if (markerAvailable) {
-        showProgress('Processing math pages with Marker...', 50);
+        showProgress('Processing missing matrices with Marker...', 50);
         await new Promise(r => setTimeout(r, 50));
 
         // We need the original PDF source as ArrayBuffer for marker
@@ -184,7 +187,7 @@ async function processPDFSource(source, title) {
         }
 
         if (pdfBuffer) {
-          const markerResult = await convertWithMarker(pdfBuffer, mathPageNumbers);
+          const markerResult = await convertWithMarker(pdfBuffer, markerPageNumbers);
 
           if (markerResult && markerResult.success) {
             // Use marker's per-page output
@@ -201,23 +204,9 @@ async function processPDFSource(source, title) {
       } else {
         console.warn('[PDF→MD] Marker server not available, using current method for math pages');
       }
-
-      // Fallback: process math pages through current pipeline if marker didn't handle them
-      const unhandledMathPages = pages.filter(
-        p => p.hasMath && !markerMdByPage[p.pageNum]
-      );
-      if (unhandledMathPages.length > 0) {
-        const processedFallback = processLayout(unhandledMathPages);
-        for (const processed of processedFallback) {
-          const pageMd = generateMarkdown([processed]);
-          if (pageMd.trim()) {
-            nonMathMdByPage[processed.pageNum] = pageMd;
-          }
-        }
-      }
     }
 
-    // Step 5: Merge all pages in order
+    // Step 4: Merge all pages in order
     showProgress('Generating Markdown...', 85);
     await new Promise(r => setTimeout(r, 50));
 
@@ -225,8 +214,8 @@ async function processPDFSource(source, title) {
     for (let i = 1; i <= pages.length; i++) {
       if (markerMdByPage[i]) {
         allPageMd.push(markerMdByPage[i]);
-      } else if (nonMathMdByPage[i]) {
-        allPageMd.push(nonMathMdByPage[i]);
+      } else if (nativeMdByPage[i]) {
+        allPageMd.push(nativeMdByPage[i]);
       }
     }
 
