@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Book Organizer</title>
+  <link rel="stylesheet" href="organizer.css">
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h1>Library</h1>
+      <div style="display:flex; gap:8px;">
+        <button class="icon-btn" id="btn-study-guide" title="Study Guide">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-upload-book" title="Upload PDF">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+      <input type="file" id="file-input" accept=".pdf" style="display:none">
+    </div>
+
+    <div class="book-list" id="book-list">
+      <!-- Books will be populated here -->
+    </div>
+
+    <div class="sidebar-footer">
+      <div style="display: flex; gap: 8px; width: 100%;">
+        <button class="scan-btn" id="btn-scan" title="Scan raw_source/ for PDFs" style="flex:1;">⟳ Scan Library</button>
+        <button class="icon-btn" id="btn-clear-library" title="Clear All Books" style="width: 40px; height: 40px; border-radius: 8px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </button>
+      </div>
+      <span class="muted" id="book-count" style="margin-top: 10px; display: block; text-align: center;">0 books</span>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main" id="main">
+
+    <!-- Empty state -->
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      </div>
+      <p>Upload a book or scan your library</p>
+      <span class="muted">Place PDFs in raw_source/ then click "⟳ Scan Library"</span>
+    </div>
+
+    <!-- Chapter List View -->
+    <div class="chapter-view" id="chapter-view" style="display:none">
+      <div class="chapter-header">
+        <button class="text-btn" id="btn-back">← Library</button>
+        <h2 id="book-title"></h2>
+        <span class="muted" id="book-stats"></span>
+      </div>
+
+      <div class="knowledge-panel" id="knowledge-panel" style="display:none">
+        <div class="knowledge-header">
+          <span class="knowledge-title">Library Connections</span>
+          <span class="muted" id="knowledge-subtitle"></span>
+        </div>
+        <div id="knowledge-matches"></div>
+      </div>
+
+      <div class="chapter-list" id="chapter-list">
+        <!-- Chapters populated here -->
+      </div>
+    </div>
+
+    <!-- Prompt View -->
+    <div class="prompt-view" id="prompt-view" style="display:none">
+      <div class="prompt-header">
+        <button class="text-btn" id="btn-back-chapters">← Chapters</button>
+        <h2 id="chapter-title"></h2>
+      </div>
+
+      <!-- Mode selector -->
+      <div class="mode-bar" id="mode-bar">
+        <button class="mode-btn active" data-mode="deep_dive">Deep Dive</button>
+        <button class="mode-btn" data-mode="exam_prep">Exam Prep</button>
+        <button class="mode-btn" data-mode="quick_review">Quick Review</button>
+        <button class="mode-btn" data-mode="socratic">Socratic</button>
+      </div>
+
+      <!-- Generate button -->
+      <div class="generate-area" id="generate-area">
+        <button class="generate-btn" id="btn-generate">
+          Generate Study Prompt
+        </button>
+      </div>
+
+      <!-- Output -->
+      <div class="prompt-output" id="prompt-output" style="display:none">
+        <div class="output-toolbar">
+          <span class="muted" id="prompt-stats"></span>
+          <div class="output-actions">
+            <button class="icon-btn small" id="btn-copy-prompt" title="Copy prompt">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button class="icon-btn small" id="btn-download-prompt" title="Download .md">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
+          </div>
+        </div>
+        <pre class="prompt-text" id="prompt-text"></pre>
+      </div>
+
+      <!-- Loading -->
+      <div class="loading" id="loading" style="display:none">
+        <div class="spinner"></div>
+        <span id="loading-text">Analyzing chapter...</span>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Upload progress overlay -->
+  <div class="overlay" id="upload-overlay" style="display:none">
+    <div class="overlay-card">
+      <div class="spinner"></div>
+      <p id="upload-status">Uploading and processing...</p>
+      <span class="muted">This may take a minute for large books</span>
+    </div>
+  </div>
+
+  <!-- Study Guide Modal -->
+  <div class="overlay" id="study-guide-modal" style="display:none">
+    <div class="overlay-card" style="max-width: 600px; text-align: left; padding: 30px;">
+      <h2 style="margin-top: 0; display: flex; align-items: center; gap: 10px;">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Study Process Reference
+      </h2>
+      <p style="color: var(--text-muted); line-height: 1.5;">This tool is designed to eliminate AI hallucinations by extracting and fixing PDF formulas deterministically before feeding them to an LLM.</p>
+      
+      <h3 style="margin-top: 24px;">1. Select a Chapter</h3>
+      <p style="color: var(--text-muted);">Books are automatically chunked into logical chapters. Select one from your Library.</p>
+
+      <h3 style="margin-top: 24px;">2. Choose a Study Mode</h3>
+      <ul style="padding-left: 20px; color: var(--text-muted); line-height: 1.6;">
+        <li><strong style="color: var(--text);">Deep Dive:</strong> Step-by-step breakdown of dense math.</li>
+        <li><strong style="color: var(--text);">Exam Prep:</strong> Generates practice questions based on formulas.</li>
+        <li><strong style="color: var(--text);">Quick Review:</strong> Cheat-sheet style summary.</li>
+        <li><strong style="color: var(--text);">Socratic:</strong> Tests you with leading questions.</li>
+      </ul>
+
+      <h3 style="margin-top: 24px;">3. Interact with the LLM</h3>
+      <p style="color: var(--text-muted); line-height: 1.5;">Click <strong style="color: var(--text);">Generate Study Prompt</strong>. Copy the resulting prompt into ChatGPT, Claude, or Gemini. Ask follow-up questions if parts remain unclear!</p>
+      
+      <div style="text-align: right; margin-top: 30px;">
+        <button class="generate-btn" id="btn-close-guide" style="width: auto; padding: 10px 24px; display: inline-block;">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="organizer.js"></script>
+</body>
+</html>

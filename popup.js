@@ -449,6 +449,11 @@ btnChatGPT.addEventListener('click', async () => {
   }
 });
 
+// Open Book Organizer in a new tab
+document.getElementById('btn-organizer').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('organizer.html') });
+});
+
 // ─── Restore Last Result ────────────────────────────────────
 
 chrome.storage.local.get(['lastResult', 'lastTitle', 'timestamp'], (data) => {
