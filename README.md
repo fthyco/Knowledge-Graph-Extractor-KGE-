@@ -61,6 +61,7 @@ This project solves all of them by building a **deterministic intelligence layer
 
 ### 📖 Intelligent PDF Ingestion
 - AI-powered OCR via `marker-pdf` with GPU acceleration
+- **Smart OCR routing** — pre-classifies pages as digital, scanned, or empty; only applies OCR to pages that actually need it
 - Memory-optimized chunked extraction for 500+ page books
 - Automatic metadata extraction (author, subject) from PDF properties
 - Singleton model loading — first book takes ~15s, subsequent books are instant
@@ -109,8 +110,12 @@ graph TD
     A[Chrome Extension UI] -->|HTTP| B[FastAPI Backend<br>marker_bridge.py :8001]
     
     subgraph Backend Pipeline
-        B -->|Raw PDF| C(marker-pdf OCR)
-        C -->|Raw Markdown| D(latexfix Pipeline)
+        B -->|Raw PDF| PC(Page Classifier)
+        PC -->|Digital pages| C1(marker-pdf<br>text mode)
+        PC -->|Scanned pages| C2(marker-pdf<br>OCR mode)
+        PC -.->|Empty pages| SK[Skip]
+        C1 -->|Markdown| D(latexfix Pipeline)
+        C2 -->|Markdown| D
         D -->|Clean Markdown| M(Metadata Extractor)
         M -->|Author/Subject| E(Warehouse Ingester)
         E -->|Split & Structure| F[(SQLite Warehouse)]
@@ -128,7 +133,12 @@ graph TD
 ```
 PDF File
   │
-  ├─ marker-pdf ──► Raw Markdown (with broken math)
+  ├─ Page Classifier ► Pre-scan pages (milliseconds)
+  │    ├─ DIGITAL (≥50 words) → text extraction, no OCR
+  │    ├─ SCANNED (has images, <50 words) → full OCR
+  │    └─ SKIP (empty, no images) → skipped entirely
+  │
+  ├─ marker-pdf ──► Raw Markdown (smart OCR per page type)
   │
   ├─ latexfix ────► Clean Markdown (valid LaTeX, solved matrices)
   │
@@ -185,24 +195,27 @@ The warehouse handles ingestion, structuring, and persistent storage of your doc
 
 | Module | Purpose |
 |---|---|
-| `ingester.py` | Full pipeline orchestrator. Singleton marker models, chunked extraction, parallel chapter analysis, background knowledge mapping |
+| `page_classifier.py` | **Smart OCR router.** Pre-scans PDF pages with `pypdf` to classify as `DIGITAL` (≥50 words), `SCANNED` (images, needs OCR), or `SKIP` (empty). Takes milliseconds even for 500+ page PDFs |
+| `ingester.py` | Full pipeline orchestrator. Singleton marker models, smart page classification, chunked extraction, parallel chapter analysis, background knowledge mapping |
 | `models.py` | Data models: `Book`, `Chapter`, `Concept`, `Formula` — all with `to_dict()` / `from_dict()` serialization |
-| `storage.py` | **SQLite-backed** persistence with WAL mode. Schema: `books`, `chapters`, `markdown`, `prompts`, `analysis`. Auto-migrates from legacy JSON format |
+| `storage.py` | **SQLite-backed** persistence with WAL mode. Schema: `books`, `chapters`, `markdown`, `prompts`, `analysis`. Batched writes with `auto_commit` control. Auto-migrates from legacy JSON format |
 
-**Ingestion Pipeline (7 Steps):**
+**Ingestion Pipeline (8 Steps):**
 1. Copy PDF to `raw_source/` with hash-based naming
 2. Create book record (status: `processing`)
-3. Extract markdown via `marker-pdf` (chunked, memory-optimized, GPU cache cleanup)
-4. Apply `latexfix` to reconstruct broken mathematics
-5. Auto-extract metadata (author, subject) from PDF properties + content
-6. Detect chapter boundaries using 3-tier heuristic strategy
-7. Analyze each chapter in parallel (structure, concepts, formulas)
-8. Build Library Intelligence knowledge map (background thread)
+3. **Pre-classify pages** — `PageClassifier` scans every page in milliseconds, grouping into digital/scanned/skip
+4. Extract markdown via `marker-pdf` — digital pages skip OCR entirely, scanned pages get full OCR, empty pages are skipped
+5. Apply `latexfix` to reconstruct broken mathematics
+6. Auto-extract metadata (author, subject) from PDF properties + content
+7. Detect chapter boundaries using 3-tier heuristic strategy
+8. Analyze each chapter in parallel (structure, concepts, formulas)
+9. Build Library Intelligence knowledge map (background thread)
 
 **Storage Performance:**
 - Single SQLite file replaces 20+ JSON file reads per `get_chapters()` call
 - WAL mode enables concurrent reads during background processing
 - 8MB cache, foreign key cascading deletes, indexed lookups
+- Batched chapter writes with deferred commits for bulk operations
 - Automatic migration from legacy JSON-file format
 
 ---
@@ -324,7 +337,7 @@ All endpoints are served by the FastAPI backend at `http://localhost:8001`. Inte
 ### Core Conversion
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/convert` | Convert a PDF to Markdown (with latexfix) |
+| `POST` | `/convert` | Convert a PDF to Markdown (with latexfix). Supports `smart_ocr` flag for selective page-level OCR |
 | `POST` | `/latexfix` | Apply latexfix to raw markdown text |
 
 ### Warehouse (Library Management)
@@ -448,6 +461,7 @@ pdf_reader/
 │
 ├── warehouse/                # Library management system
 │   ├── __init__.py           # Warehouse facade
+│   ├── page_classifier.py   # Smart OCR page classifier (digital/scanned/skip)
 │   ├── ingester.py           # Full PDF → chapters pipeline
 │   ├── models.py             # Book, Chapter, Concept, Formula models
 │   └── storage.py            # SQLite storage (WAL, cached, indexed)
@@ -496,6 +510,7 @@ The system is optimized for processing large, multi-hundred-page textbooks:
 
 | Optimization | Impact |
 |---|---|
+| **Smart OCR routing** | `PageClassifier` pre-scans pages in milliseconds; digital pages skip OCR entirely, empty pages are skipped — dramatically reduces processing time for digital-native PDFs |
 | **Singleton marker models** | Models loaded once (~15s), all subsequent books skip this cost |
 | **Chunked PDF extraction** | Auto-calculates chunk size based on available RAM; GPU cache cleared between chunks |
 | **Parallel chapter analysis** | `ThreadPoolExecutor(4)` analyzes structure, concepts, and formulas in parallel |
@@ -503,7 +518,7 @@ The system is optimized for processing large, multi-hundred-page textbooks:
 | **Background knowledge mapping** | Library Intelligence runs in a daemon thread — ingestion returns instantly |
 | **Prompt caching** | Generated prompts are cached per (book, chapter, mode) — subsequent calls are instant |
 | **Analysis caching** | Engine analysis results are cached per (book, chapter) |
-| **Batched storage writes** | `defer_index` mode accumulates writes, flush once at the end |
+| **Batched storage writes** | `auto_commit=False` mode defers commits for bulk chapter saves; `flush_index()` commits once at the end |
 | **Memory cleanup** | Full markdown released from book object after storage; `gc.collect()` + `torch.cuda.empty_cache()` between chunks |
 
 ---

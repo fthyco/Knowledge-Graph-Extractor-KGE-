@@ -1,37 +1,44 @@
 """
-marker_bridge.py — Lightweight FastAPI bridge to marker-pdf.
-Accepts PDF uploads and returns per-page markdown with LaTeX math.
+server.py — FastAPI backend for the PDF Reader & Study Prompt Engine.
 
 Start:
-    pip install marker-pdf fastapi uvicorn python-multipart
-    python marker_bridge.py
+    python server.py
+
+Endpoints:
+    /docs                                   — Interactive API docs
+    /warehouse/upload                       — Upload a PDF book
+    /warehouse/books                        — List all books
+    /warehouse/books/{id}                   — Get book details
+    /warehouse/books/{id}/chapters          — List chapters
+    /warehouse/books/{id}/chapters/{c}      — Get chapter text
+    /warehouse/scan                         — Scan raw_source/ for new PDFs
+    /engine/modes                           — List study modes
+    /engine/analyze/{book}/{ch}             — Analyze a chapter
+    /engine/prompt/{book}/{ch}              — Build study prompt
 """
 
-import io
-import os
-import time
 import hashlib
+import os
 import tempfile
 import threading
+import time
 import traceback
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from latexfix import LatexFix
 from warehouse import Warehouse
 from engine import Engine
 from engine.prompt_assembler import get_available_modes
 
-app = FastAPI(title="Marker Bridge", version="2.0.0")
+app = FastAPI(title="PDF Reader", version="3.0.0")
 
 # Initialize the book warehouse and analysis engine
 warehouse = Warehouse(raw_dir="raw_source", data_dir="warehouse/data")
 engine = Engine()
 
-# Allow requests from Chrome extensions (moz-extension:// / chrome-extension://)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,9 +46,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve web UI static files
+_web_dir = os.path.join(os.path.dirname(__file__), "web")
+if os.path.isdir(_web_dir):
+    app.mount("/web", StaticFiles(directory=_web_dir), name="web")
+
 # ── Background Ingestion Infrastructure ──────────────────
 
-# In-memory progress tracking for background ingestion jobs
 _ingestion_jobs: dict[str, dict] = {}
 _ingestion_lock = threading.Lock()
 
@@ -54,13 +65,12 @@ def _update_job(job_id: str, **kwargs):
 
 
 def _run_ingest_background(job_id: str, pdf_path: str, title: str, cleanup_path: str | None = None):
-    """
-    Run the full ingestion pipeline in a background thread.
-    Updates _ingestion_jobs with progress as it runs.
-    """
+    """Run the full ingestion pipeline in a background thread."""
     try:
-        _update_job(job_id, step="extracting_markdown", percent=10)
-        book = warehouse.ingest(pdf_path, title)
+        def on_progress(step, percent, **kw):
+            _update_job(job_id, step=step, percent=percent, **kw)
+
+        book = warehouse.ingest(pdf_path, title, progress_callback=on_progress)
         _update_job(job_id, status="done", percent=100, book_id=book["id"],
                     book_title=book.get("title", ""))
     except Exception as e:
@@ -72,15 +82,16 @@ def _run_ingest_background(job_id: str, pdf_path: str, title: str, cleanup_path:
 
 
 def _run_scan_background(job_id: str):
-    """
-    Run the scan pipeline in a background thread.
-    """
+    """Run the scan pipeline in a background thread."""
     try:
+        def on_progress(step, percent, **kw):
+            _update_job(job_id, step=step, percent=percent, **kw)
+
         _update_job(job_id, step="clearing_errors", percent=5)
         cleared = warehouse.clear_errors()
 
         _update_job(job_id, step="scanning_directory", percent=15)
-        new_books = warehouse.scan_raw_source()
+        new_books = warehouse.scan_raw_source(progress_callback=on_progress)
 
         _update_job(job_id, status="done", percent=100,
                     count=len(new_books), cleared_errors=cleared,
@@ -90,104 +101,24 @@ def _run_scan_background(job_id: str):
         _update_job(job_id, status="error", error=str(e))
 
 
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  HEALTH                                                      ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+
+@app.get("/")
+def root():
+    """Serve the web UI."""
+    index = os.path.join(_web_dir, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
+    return JSONResponse({"message": "PDF Reader API", "docs": "/docs"})
+
+
 @app.get("/health")
 def health():
-    """Health check — lets the extension know the server is alive."""
-    return {"status": "ok", "service": "marker-bridge"}
-
-
-@app.post("/convert")
-def convert(
-    pdf_file: UploadFile = File(...),
-    pages: str = Form(default=""),
-    force_ocr: bool = Form(default=False),
-    smart_ocr: bool = Form(default=True),
-):
-    """
-    Convert a PDF (or specific pages) to Markdown via marker-pdf.
-
-    - **pdf_file**: The PDF file (multipart upload)
-    - **pages**: Comma-separated 1-based page numbers to return.
-                 If empty, all pages are returned.
-    - **force_ocr**: Force OCR on all lines.
-    - **smart_ocr**: Auto-detect which pages need OCR (default: True).
-                     When enabled, pages are classified as digital/scanned
-                     and OCR is only applied to scanned pages.
-    """
-    tmp_path = None
-    try:
-        # Save uploaded PDF to a temp file (marker needs a file path)
-        content = pdf_file.file.read()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-
-        # Parse requested page numbers
-        requested_pages = set()
-        if pages.strip():
-            for p in pages.split(","):
-                p = p.strip()
-                if p.isdigit():
-                    requested_pages.add(int(p))
-
-        # Run marker conversion (smart or legacy mode)
-        if smart_ocr and not force_ocr:
-            markdown_text = _run_marker_smart(tmp_path)
-        else:
-            markdown_text = _run_marker(tmp_path, force_ocr)
-
-        # Apply latexfix to detect and compute LaTeX matrices
-        try:
-            lf = LatexFix.from_text(markdown_text).run()
-            lf.auto_solve()
-            markdown_text = lf.export_text()
-        except Exception as lf_err:
-            print(f"Warning: latexfix failed, returning original markdown. Error: {lf_err}")
-            traceback.print_exc()
-
-        # Split into per-page sections if marker inserted page breaks
-        page_sections = _split_by_pages(markdown_text)
-
-        # Filter to requested pages if specified
-        if requested_pages:
-            filtered = {}
-            for pg_num, pg_md in page_sections.items():
-                if pg_num in requested_pages:
-                    filtered[str(pg_num)] = pg_md
-        else:
-            filtered = {str(k): v for k, v in page_sections.items()}
-
-        return JSONResponse({
-            "success": True,
-            "markdown": markdown_text,
-            "pages": filtered,
-            "total_pages": len(page_sections),
-        })
-
-    except Exception as e:
-        traceback.print_exc()
-        return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
-        )
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-
-@app.post("/latexfix")
-def apply_latexfix(markdown: str = Form(...)):
-    """
-    Apply latexfix to a full markdown string and return the computed/fixed markdown.
-    """
-    try:
-        lf = LatexFix.from_text(markdown).run()
-        lf.auto_solve()
-        fixed_markdown = lf.export_text()
-        return JSONResponse({"success": True, "markdown": fixed_markdown})
-    except Exception as e:
-        traceback.print_exc()
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    """Health check."""
+    return {"status": "ok", "service": "pdf-reader"}
 
 
 # ╔══════════════════════════════════════════════════════════════╗
@@ -206,7 +137,7 @@ def warehouse_upload(
 
     If background=true (default): starts processing in background,
     returns immediately with a job_id for progress tracking.
-    If background=false: blocks until processing completes (legacy behavior).
+    If background=false: blocks until processing completes.
     """
     tmp_path = None
     try:
@@ -218,7 +149,6 @@ def warehouse_upload(
         book_title = title.strip() or pdf_file.filename.replace(".pdf", "").replace("_", " ").title()
 
         if background.lower() == "false":
-            # Legacy blocking mode
             try:
                 book = warehouse.ingest(tmp_path, book_title)
                 return JSONResponse({"success": True, "book": book})
@@ -226,7 +156,7 @@ def warehouse_upload(
                 if tmp_path and os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
-        # Background mode: return immediately with job_id
+        # Background mode
         job_id = hashlib.md5(content[:4096] + book_title.encode()).hexdigest()[:12]
 
         with _ingestion_lock:
@@ -259,10 +189,7 @@ def warehouse_upload(
 
 @app.get("/warehouse/progress/{job_id}")
 def warehouse_progress(job_id: str):
-    """
-    SSE endpoint — stream real-time progress updates for a background job.
-    The client connects with EventSource and receives JSON updates.
-    """
+    """SSE endpoint — stream real-time progress updates for a background job."""
     import json
 
     def event_stream():
@@ -280,7 +207,6 @@ def warehouse_progress(job_id: str):
                 last_state_str = state_str
 
                 if state["status"] in ("done", "error"):
-                    # Clean up job after terminal state
                     with _ingestion_lock:
                         _ingestion_jobs.pop(job_id, None)
                     break
@@ -296,10 +222,7 @@ def warehouse_progress(job_id: str):
 
 @app.get("/warehouse/job/{job_id}")
 def warehouse_job_status(job_id: str):
-    """
-    Polling fallback — get current status of a background job.
-    Use this if SSE (EventSource) is not available.
-    """
+    """Polling fallback — get current status of a background job."""
     with _ingestion_lock:
         state = _ingestion_jobs.get(job_id)
     if state is None:
@@ -357,45 +280,12 @@ def warehouse_delete_book(book_id: str):
     return JSONResponse({"success": True})
 
 
-@app.get("/warehouse/books/{book_id}/knowledge-map")
-def warehouse_get_knowledge_map(book_id: str):
-    """Retrieve the pre-computed Library Intelligence data for the book."""
-    book = warehouse.get_book(book_id)
-    if not book:
-        return JSONResponse(
-            {"success": False, "error": "Book not found"},
-            status_code=404,
-        )
-    return JSONResponse({
-        "success": True, 
-        "knowledge_map": {
-            "input_book_id": book_id,
-            "matches": book.get("similar_books", [])
-        }
-    })
-
-
-@app.get("/warehouse/search")
-def warehouse_search(q: str = ""):
-    """Search books by title."""
-    results = warehouse.search_books(q)
-    return JSONResponse({"success": True, "books": results})
-
-
 @app.post("/warehouse/scan")
 def warehouse_scan(background: str = "true"):
-    """
-    Scan raw_source/ for new PDFs and ingest them.
-
-    If background=true (default): runs in background with progress tracking.
-    If background=false: blocks until complete (legacy behavior).
-    """
+    """Scan raw_source/ for new PDFs and ingest them."""
     try:
         if background.lower() == "false":
-            # Legacy blocking mode
             cleared = warehouse.clear_errors()
-            if cleared:
-                print(f"[Warehouse] Cleared {cleared} errored books")
             new_books = warehouse.scan_raw_source()
             return JSONResponse({
                 "success": True,
@@ -404,7 +294,6 @@ def warehouse_scan(background: str = "true"):
                 "cleared_errors": cleared,
             })
 
-        # Background mode
         job_id = f"scan_{int(time.time())}"
 
         with _ingestion_lock:
@@ -439,40 +328,6 @@ def warehouse_clear_errors():
     return JSONResponse({"success": True, "cleared": cleared})
 
 
-@app.post("/warehouse/rebuild-knowledge/{book_id}")
-def warehouse_rebuild_knowledge(book_id: str):
-    """Rebuild the knowledge map for a specific book (on-demand)."""
-    try:
-        from warehouse.models import Book, Chapter
-
-        book_data = warehouse.get_book(book_id)
-        if not book_data:
-            return JSONResponse(
-                {"success": False, "error": "Book not found"},
-                status_code=404,
-            )
-
-        book = Book.from_dict(book_data)
-        chapters_data = warehouse.get_chapters(book_id)
-        chapters = [Chapter.from_dict(ch) for ch in chapters_data]
-
-        # Build knowledge map synchronously
-        warehouse.ingester._build_knowledge_map(book, chapters)
-        warehouse.storage.save_book(book)
-
-        return JSONResponse({
-            "success": True,
-            "matches": book.similar_books,
-        })
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JSONResponse(
-            {"success": False, "error": str(e)},
-            status_code=500,
-        )
-
-
 @app.post("/warehouse/clear-all")
 def warehouse_clear_all():
     """Remove all books from the library."""
@@ -484,25 +339,59 @@ def warehouse_clear_all():
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
+@app.get("/warehouse/config")
+def warehouse_get_config():
+    """Get the current configuration variables for the warehouse control unit."""
+    try:
+        config_data = warehouse.config_manager.config.to_dict()
+        return JSONResponse({"success": True, "config": config_data})
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@app.patch("/warehouse/config")
+def warehouse_update_config(
+    fast_path_enabled: str = Form(default=None),
+    pypdf_threshold: str = Form(default=None),
+    export_dir: str = Form(default=None)
+):
+    """Update configuration variables via the control unit."""
+    try:
+        updates = {}
+        if fast_path_enabled is not None:
+            updates["fast_path_enabled"] = fast_path_enabled.lower() == "true"
+        if pypdf_threshold is not None:
+            updates["pypdf_threshold"] = int(pypdf_threshold)
+        if export_dir is not None:
+            updates["export_dir"] = export_dir
+
+        if updates:
+            warehouse.config_manager.update(updates)
+
+        return JSONResponse({"success": True, "config": warehouse.config_manager.config.to_dict()})
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
 @app.patch("/warehouse/books/{book_id}/chapters/{chapter_id}/status")
 def warehouse_update_chapter_status(book_id: str, chapter_id: str, status: str = Form(...)):
     """Update study status of a chapter."""
     try:
         if status not in ("not_started", "in_progress", "completed"):
             return JSONResponse({"success": False, "error": "Invalid status"}, status_code=400)
-            
+
         chapter = warehouse.get_chapter(book_id, chapter_id)
         if not chapter:
             return JSONResponse({"success": False, "error": "Chapter not found"}, status_code=404)
-            
+
         chapter["study_status"] = status
-        
-        # Instantiate Chapter model, update, and save
+
         from warehouse.models import Chapter
         ch_model = Chapter.from_dict(chapter)
-        
         warehouse.storage.save_chapter(ch_model)
-        
+
         return JSONResponse({"success": True, "status": status})
     except Exception as e:
         traceback.print_exc()
@@ -524,11 +413,9 @@ def engine_list_modes():
 def engine_analyze(book_id: str, chapter_id: str):
     """
     Run the deterministic engine on a chapter.
-    Extracts structure, concepts, formulas, dependencies, density.
     Returns cached results if available.
     """
     try:
-        # Check cache first
         cached = warehouse.storage.get_cached_analysis(book_id, chapter_id)
         if cached:
             return JSONResponse({
@@ -555,7 +442,6 @@ def engine_analyze(book_id: str, chapter_id: str):
 
         analysis = engine.analyze(chapter_text, chapter)
 
-        # Cache the result
         warehouse.storage.save_analysis(book_id, chapter_id, analysis)
 
         return JSONResponse({
@@ -581,15 +467,9 @@ def engine_build_prompt(
 ):
     """
     Build an optimal study prompt for a chapter.
-
-    Runs the full engine pipeline:
-    chapter text → structure → concepts → formulas → dependencies
-    → density → prompt assembly
-
     Returns the complete prompt ready to paste into any LLM.
     """
     try:
-        # Load chapter
         chapter = warehouse.get_chapter(book_id, chapter_id)
         if not chapter:
             return JSONResponse(
@@ -604,10 +484,9 @@ def engine_build_prompt(
                 status_code=400,
             )
 
-        # Load book metadata
         book = warehouse.get_book(book_id) or {}
 
-        # Check for cached prompt
+        # Check cache
         cached = warehouse.storage.get_cached_prompt(book_id, chapter_id, mode)
         if cached:
             return JSONResponse({
@@ -619,20 +498,24 @@ def engine_build_prompt(
                 "est_tokens": len(cached) // 4,
             })
 
-        # Build cross-references from other books in the library
-        cross_refs = _find_cross_references(book_id, chapter, warehouse)
-
-        # Run engine
         prompt = engine.build_prompt(
             chapter_text=chapter_text,
             chapter_meta=chapter,
             book_meta=book,
             mode=mode,
-            cross_references=cross_refs,
         )
 
-        # Cache the result
         warehouse.storage.save_prompt(book_id, chapter_id, mode, prompt)
+
+        # Also write the final final output to the configured export dir
+        try:
+            export_path = os.path.join(warehouse.config_manager.config.export_dir, book.get("title", "Unknown Book"))
+            os.makedirs(export_path, exist_ok=True)
+            filename = f"Ch_{chapter.get('number', '00')}_{mode}.txt"
+            with open(os.path.join(export_path, filename), "w", encoding="utf-8") as f:
+                f.write(prompt)
+        except Exception as ex:
+            print(f"[Engine] Failed to write prompt to export directory: {ex}")
 
         return JSONResponse({
             "success": True,
@@ -650,178 +533,14 @@ def engine_build_prompt(
         )
 
 
-def _find_cross_references(book_id: str, chapter: dict,
-                           warehouse_inst) -> list[dict]:
-    """
-    Find related books and chapters using the pre-computed Intelligence Engine matches.
-    """
-    book = warehouse_inst.get_book(book_id)
-    if not book:
-        return []
-
-    similar = book.get("similar_books", [])
-    if not similar:
-        return []
-
-    cross_refs = []
-    # Filter and sort the pre-computed knowledge map
-    top_matches = sorted(similar, key=lambda x: x.get("total_score", 0), reverse=True)[:5]
-
-    for match in top_matches:
-        # Skip weak correlations
-        if match.get("total_score", 0) < 0.2:
-            continue
-            
-        w_id = match.get("warehouse_book_id")
-        w_book = warehouse_inst.get_book(w_id)
-        if not w_book:
-            continue
-            
-        cross_refs.append({
-            "book_title": w_book.get("title", ""),
-            "chapter_title": "Related via Library Intelligence",
-            "relevance": f"Score: {match.get('total_score')} (Concepts: {match.get('concept_score')})",
-        })
-
-    return cross_refs
-
-
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  HELPERS                                                    ║
+# ║  MAIN                                                       ║
 # ╚══════════════════════════════════════════════════════════════╝
-
-
-def _run_marker(filepath: str, force_ocr: bool) -> str:
-    """Run marker-pdf on the given file and return markdown string (legacy mode)."""
-    from marker.converters.pdf import PdfConverter
-    from marker.config.parser import ConfigParser
-    from marker.models import create_model_dict
-
-    config = {
-        "output_format": "markdown",
-        "force_ocr": force_ocr,
-    }
-
-    config_parser = ConfigParser(config)
-    converter = PdfConverter(
-        artifact_dict=create_model_dict(),
-        config=config_parser.generate_config_dict()
-    )
-
-    rendered = converter(filepath)
-    return rendered.markdown
-
-
-def _run_marker_smart(filepath: str) -> str:
-    """
-    Run marker-pdf with Smart OCR — classify pages first,
-    then process digital pages without OCR and scanned pages with OCR.
-    """
-    from marker.converters.pdf import PdfConverter
-    from marker.config.parser import ConfigParser
-    from marker.models import create_model_dict
-    from warehouse.page_classifier import PageClassifier
-
-    # Classify pages (milliseconds)
-    classification = PageClassifier.classify(filepath)
-    print(f"[Smart OCR] /convert: {classification.summary}")
-
-    model_dict = create_model_dict()
-    chunks = []
-
-    # Build tasks: (page_start, page_end, force_ocr)
-    tasks = []
-    digital_runs = PageClassifier.group_contiguous(classification.digital_pages)
-    for run_start, run_end in digital_runs:
-        tasks.append((run_start, run_end, False))
-
-    ocr_runs = PageClassifier.group_contiguous(classification.ocr_pages)
-    for run_start, run_end in ocr_runs:
-        tasks.append((run_start, run_end, True))
-
-    tasks.sort(key=lambda t: t[0])
-
-    if not tasks:
-        # Fallback: process everything without OCR
-        config = {"output_format": "markdown", "force_ocr": False}
-        config_parser = ConfigParser(config)
-        converter = PdfConverter(
-            artifact_dict=model_dict,
-            config=config_parser.generate_config_dict(),
-        )
-        return converter(filepath).markdown
-
-    for page_start, page_end, force_ocr in tasks:
-        label = "OCR" if force_ocr else "text"
-        print(f"  [{label}] pages {page_start+1}–{page_end+1}")
-
-        config = {
-            "output_format": "markdown",
-            "force_ocr": force_ocr,
-            "page_range": f"{page_start}-{page_end}",
-        }
-        config_parser = ConfigParser(config)
-        converter = PdfConverter(
-            artifact_dict=model_dict,
-            config=config_parser.generate_config_dict(),
-        )
-        try:
-            rendered = converter(filepath)
-            chunks.append(rendered.markdown)
-        except Exception as e:
-            print(f"  Warning: pages {page_start}–{page_end} failed: {e}")
-
-    return "\n\n".join(chunks)
-
-
-def _split_by_pages(markdown: str) -> dict:
-    """
-    Best-effort split of marker output into per-page sections.
-    Marker doesn't always insert explicit page breaks, so we use
-    horizontal rules (---) or page-break comments as delimiters.
-    If no delimiters found, the entire text is page 1.
-    """
-    import re
-
-    # Try splitting on horizontal rules or page-break markers
-    # Marker sometimes inserts "---" between pages
-    parts = re.split(r'\n-{3,}\n', markdown)
-
-    if len(parts) <= 1:
-        # No clear page breaks — return everything as page 1
-        return {1: markdown.strip()}
-
-    result = {}
-    for i, part in enumerate(parts, start=1):
-        stripped = part.strip()
-        if stripped:
-            result[i] = stripped
-
-    return result
 
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting Marker Bridge on http://localhost:8001")
-    print("Docs available at http://localhost:8001/docs")
+    print("Starting PDF Reader on http://localhost:8001")
+    print("API Docs: http://localhost:8001/docs")
     print()
-    print("Warehouse endpoints:")
-    print("  POST   /warehouse/upload                — Upload a PDF book")
-    print("  GET    /warehouse/books                  — List all books")
-    print("  GET    /warehouse/books/{id}             — Get book details")
-    print("  GET    /warehouse/books/{id}/chapters    — List chapters")
-    print("  GET    /warehouse/books/{id}/chapters/{c}— Get chapter text")
-    print("  DELETE /warehouse/books/{id}             — Delete a book")
-    print("  GET    /warehouse/search?q=...           — Search books")
-    print()
-    print("Engine endpoints:")
-    print("  GET    /engine/modes                     — List study modes")
-    print("  POST   /engine/analyze/{book}/{ch}       — Analyze a chapter")
-    print("  POST   /engine/prompt/{book}/{ch}        — Build study prompt")
-    print()
-    # Mount static files LAST so API routes take priority
-    app.mount("/", StaticFiles(directory=".", html=True), name="static")
-
     uvicorn.run(app, host="0.0.0.0", port=8001)
-
-

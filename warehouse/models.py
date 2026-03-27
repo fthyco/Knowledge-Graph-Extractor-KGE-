@@ -10,47 +10,11 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, field, asdict
-from typing import Optional
 
 
 def _generate_id(seed: str) -> str:
     """Generate a short deterministic ID from a seed string."""
     return hashlib.sha256(seed.encode()).hexdigest()[:12]
-
-
-@dataclass
-class Concept:
-    """A key concept extracted from a chapter."""
-    name: str
-    definition: str = ""
-    source_line: int = 0          # line number in the chapter markdown
-    importance: str = "medium"    # low | medium | high
-    related_concepts: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> Concept:
-        return cls(**d)
-
-
-@dataclass
-class Formula:
-    """A LaTeX formula extracted from a chapter."""
-    latex: str                    # the raw LaTeX string
-    context_before: str = ""      # surrounding text that explains it (before)
-    context_after: str = ""       # surrounding text that explains it (after)
-    type: str = "inline"          # display | inline
-    position: int = 0             # char offset
-    variables: list[dict] = field(default_factory=list)  # variables defined nearby
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, d: dict) -> Formula:
-        return cls(**d)
 
 
 @dataclass
@@ -69,7 +33,6 @@ class Chapter:
     concepts: list[dict] = field(default_factory=list)
     formulas: list[dict] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)  # chapter IDs this depends on
-    section_types: dict = field(default_factory=dict)       # section -> type mapping
     study_status: str = "not_started"    # not_started | in_progress | completed
 
     def to_dict(self) -> dict:

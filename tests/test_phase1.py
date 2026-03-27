@@ -128,7 +128,7 @@ def test_ingester_helper_methods_exist():
     """Verify the refactored helper methods exist on Ingester."""
     from warehouse.ingester import Ingester
 
-    assert hasattr(Ingester, "_extract_markdown_safe"), "Missing _extract_markdown_safe"
+    assert hasattr(Ingester, "_extract_markdown"), "Missing _extract_markdown"
     assert hasattr(Ingester, "_analyze_and_save_chapters"), "Missing _analyze_and_save_chapters"
     assert hasattr(Ingester, "_build_knowledge_map"), "Missing _build_knowledge_map"
 

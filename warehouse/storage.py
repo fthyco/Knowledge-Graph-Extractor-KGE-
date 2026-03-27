@@ -43,9 +43,6 @@ class Storage:
         self._local = threading.local()
         self._init_db()
 
-        # Migrate from old JSON format if needed
-        self._maybe_migrate_json()
-
     @property
     def _conn(self) -> sqlite3.Connection:
         """Get a thread-local database connection."""
@@ -93,7 +90,7 @@ class Storage:
                 concepts    TEXT NOT NULL DEFAULT '[]',
                 formulas    TEXT NOT NULL DEFAULT '[]',
                 dependencies TEXT NOT NULL DEFAULT '[]',
-                section_types TEXT NOT NULL DEFAULT '{}',
+
                 study_status TEXT NOT NULL DEFAULT 'not_started',
                 FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
             );
@@ -251,11 +248,24 @@ class Storage:
         effectively a no-op in SQLite mode (writes are always atomic).
         """
         self._conn.execute("""
-            INSERT OR REPLACE INTO books
+            INSERT INTO books
             (id, title, filename, author, subject, total_chapters,
              total_words, total_pages, upload_date, raw_pdf_path,
              chapter_ids, similar_books, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title=excluded.title,
+                filename=excluded.filename,
+                author=excluded.author,
+                subject=excluded.subject,
+                total_chapters=excluded.total_chapters,
+                total_words=excluded.total_words,
+                total_pages=excluded.total_pages,
+                upload_date=excluded.upload_date,
+                raw_pdf_path=excluded.raw_pdf_path,
+                chapter_ids=excluded.chapter_ids,
+                similar_books=excluded.similar_books,
+                status=excluded.status
         """, (
             book.id, book.title, book.filename, book.author, book.subject,
             book.total_chapters, book.total_words, book.total_pages,
@@ -268,7 +278,8 @@ class Storage:
         # Save full markdown separately
         if book.full_markdown:
             self._conn.execute(
-                "INSERT OR REPLACE INTO markdown (book_id, content) VALUES (?, ?)",
+                "INSERT INTO markdown (book_id, content) VALUES (?, ?) "
+                "ON CONFLICT(book_id) DO UPDATE SET content=excluded.content",
                 (book.id, book.full_markdown)
             )
 
@@ -326,7 +337,7 @@ class Storage:
         rows = self._conn.execute(
             "SELECT id, book_id, number, title, level, start_index, end_index, "
             "word_count, sub_headings, concepts, formulas, dependencies, "
-            "section_types, study_status "
+            "study_status "
             "FROM chapters WHERE book_id = ? ORDER BY number",
             (book_id,)
         ).fetchall()
@@ -344,7 +355,7 @@ class Storage:
 
     def save_chapter(self, chapter: Chapter, auto_commit: bool = True):
         """
-        Save a chapter (metadata + text) in a single INSERT.
+        Save a chapter (metadata + text) in a single UPSERT.
 
         Args:
             chapter: The Chapter model to save.
@@ -352,11 +363,25 @@ class Storage:
                          Set to False for batch operations, then call flush_index().
         """
         self._conn.execute("""
-            INSERT OR REPLACE INTO chapters
+            INSERT INTO chapters
             (id, book_id, number, title, level, start_index, end_index,
              word_count, full_text, sub_headings, concepts, formulas,
-             dependencies, section_types, study_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             dependencies, study_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                book_id=excluded.book_id,
+                number=excluded.number,
+                title=excluded.title,
+                level=excluded.level,
+                start_index=excluded.start_index,
+                end_index=excluded.end_index,
+                word_count=excluded.word_count,
+                full_text=excluded.full_text,
+                sub_headings=excluded.sub_headings,
+                concepts=excluded.concepts,
+                formulas=excluded.formulas,
+                dependencies=excluded.dependencies,
+                study_status=excluded.study_status
         """, (
             chapter.id, chapter.book_id, chapter.number, chapter.title,
             chapter.level, chapter.start_index, chapter.end_index,
@@ -365,7 +390,6 @@ class Storage:
             json.dumps(chapter.concepts, ensure_ascii=False),
             json.dumps(chapter.formulas, ensure_ascii=False),
             json.dumps(chapter.dependencies, ensure_ascii=False),
-            json.dumps(chapter.section_types, ensure_ascii=False),
             chapter.study_status,
         ))
         if auto_commit:
@@ -384,8 +408,9 @@ class Storage:
     def save_prompt(self, book_id: str, chapter_id: str, mode: str, prompt: str):
         """Cache a generated prompt."""
         self._conn.execute(
-            "INSERT OR REPLACE INTO prompts (book_id, chapter_id, mode, content) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO prompts (book_id, chapter_id, mode, content) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(book_id, chapter_id, mode) DO UPDATE SET content=excluded.content",
             (book_id, chapter_id, mode, prompt)
         )
         self._conn.commit()
@@ -405,8 +430,8 @@ class Storage:
     def save_analysis(self, book_id: str, chapter_id: str, analysis: dict):
         """Cache engine analysis results for a chapter."""
         self._conn.execute(
-            "INSERT OR REPLACE INTO analysis (book_id, chapter_id, data) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO analysis (book_id, chapter_id, data) VALUES (?, ?, ?) "
+            "ON CONFLICT(book_id, chapter_id) DO UPDATE SET data=excluded.data",
             (book_id, chapter_id, json.dumps(analysis, ensure_ascii=False))
         )
         self._conn.commit()
@@ -429,7 +454,7 @@ class Storage:
         d["concepts"] = json.loads(d.get("concepts", "[]"))
         d["formulas"] = json.loads(d.get("formulas", "[]"))
         d["dependencies"] = json.loads(d.get("dependencies", "[]"))
-        d["section_types"] = json.loads(d.get("section_types", "{}"))
+
 
         if not include_text:
             d.pop("full_text", None)

@@ -11,14 +11,16 @@ Usage:
 from warehouse.models import Book, Chapter
 from warehouse.storage import Storage
 from warehouse.ingester import Ingester
+from warehouse.config import ConfigManager
 
 
 class Warehouse:
     """Top-level API for the book warehouse."""
 
     def __init__(self, raw_dir: str = "raw_source", data_dir: str = "warehouse/data"):
+        self.config_manager = ConfigManager(f"{data_dir}/config.json")
         self.storage = Storage(data_dir)
-        self.ingester = Ingester(raw_dir, self.storage)
+        self.ingester = Ingester(raw_dir, self.storage, self.config_manager)
 
     # ── Books ───────────────────────────────────────────────
     def list_books(self) -> list[dict]:
@@ -38,7 +40,8 @@ class Warehouse:
         return self.storage.clear_all_books()
 
     # ── Ingestion ───────────────────────────────────────────
-    def ingest(self, pdf_path: str, title: str | None = None) -> dict:
+    def ingest(self, pdf_path: str, title: str | None = None,
+               progress_callback=None) -> dict:
         """
         Ingest a PDF book:
         1. Copy PDF to raw_source/
@@ -48,7 +51,7 @@ class Warehouse:
 
         Returns the book record.
         """
-        return self.ingester.ingest(pdf_path, title)
+        return self.ingester.ingest(pdf_path, title, progress_callback=progress_callback)
 
     # ── Chapters ────────────────────────────────────────────
     def get_chapters(self, book_id: str) -> list[dict]:
@@ -68,12 +71,12 @@ class Warehouse:
         ]
 
     # ── Scan raw_source/ ───────────────────────────────────
-    def scan_raw_source(self) -> list[dict]:
+    def scan_raw_source(self, progress_callback=None) -> list[dict]:
         """
         Scan raw_source/ for PDFs that aren't yet in the warehouse.
         Ingest each one. Returns list of newly ingested books.
         """
-        return self.ingester.scan_directory()
+        return self.ingester.scan_directory(progress_callback=progress_callback)
 
     # ── Maintenance ────────────────────────────────────────
     def clear_errors(self) -> int:
