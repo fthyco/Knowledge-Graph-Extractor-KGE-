@@ -14,28 +14,28 @@ All processing happens **100% locally** on your machine. No API calls. No cloud 
 
 ## Table of Contents
 
-- [Why This Exists](#-why-this-exists)
-- [Key Features](#-key-features)
-- [System Architecture](#-system-architecture)
-- [Component Breakdown](#-detailed-component-breakdown)
+- [Why This Exists](#why-this-exists)
+- [Key Features](#key-features)
+- [System Architecture](#system-architecture)
+- [Component Breakdown](#detailed-component-breakdown)
   - [Backend Bridge](#1-the-backend-bridge-marker_bridgepy)
   - [LaTeX Reconstruction](#2-mathematics-reconstruction-latexfix)
   - [Library System](#3-the-library-system-warehouse)
   - [Deterministic Engine](#4-deterministic-analysis-engine-engine)
   - [Library Intelligence](#5-library-intelligence-enginelibrary_intelligencepy)
   - [Frontend UI](#6-frontend-ui-chrome-extension)
-- [Why Not Just Send the PDF to ChatGPT?](#-why-not-just-send-the-pdf-to-chatgpt)
-- [Study Modes](#-study-modes)
-- [API Reference](#-api-reference)
-- [Setup & Installation](#-setup--installation)
-- [How to Use](#-how-to-use)
-- [Project Structure](#-project-structure)
-- [Performance](#-performance)
-- [Testing](#-testing)
+- [Why Not Just Send the PDF to ChatGPT?](#why-not-just-send-the-pdf-to-chatgpt)
+- [Study Modes](#study-modes)
+- [API Reference](#api-reference)
+- [Setup & Installation](#setup--installation)
+- [How to Use](#how-to-use)
+- [Project Structure](#project-structure)
+- [Performance](#performance)
+- [Testing](#testing)
 
 ---
 
-## 🎯 Why This Exists
+## Why This Exists
 
 If you've ever tried to study from a textbook PDF using an LLM, you've hit these walls:
 
@@ -57,29 +57,29 @@ This project solves all of them by building a **deterministic intelligence layer
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-### 📖 Intelligent PDF Ingestion
+### Intelligent PDF Ingestion
 - AI-powered OCR via `marker-pdf` with GPU acceleration
 - **Smart OCR routing** — pre-classifies pages as digital, scanned, or empty; only applies OCR to pages that actually need it
 - Memory-optimized chunked extraction for 500+ page books
 - Automatic metadata extraction (author, subject) from PDF properties
 - Singleton model loading — first book takes ~15s, subsequent books are instant
 
-### 🔢 LaTeX Mathematics Reconstruction
+### LaTeX Mathematics Reconstruction
 - Detects mangled matrices, broken decimal numbers, and scrambled math from Beamer slides
 - Reconstructs valid `\begin{bmatrix}` syntax automatically
 - **Computational math:** can actually solve matrix equations (normal equations, matrix inverses) and insert the correct $\LaTeX$ result
 - Shape inference: auto-detects column vectors vs. square matrices from variable names
 
-### 📚 Library Management
+### Library Management
 - SQLite-backed storage with WAL mode for concurrent access
 - Automatic chapter detection (3 strategies: explicit chapters → top-level headings → page breaks)
 - Study status tracking per chapter (`not_started` → `in_progress` → `completed`)
 - Search across your entire book collection
 - Background ingestion with real-time SSE progress streaming
 
-### 🧠 Deterministic Analysis Engine (6-stage pipeline)
+### Deterministic Analysis Engine (6-stage pipeline)
 - **StructureAnalyzer** — Builds a hierarchical heading tree with word counts
 - **ConceptExtractor** — Identifies key terms, acronyms, bold/italic definitions with importance ranking
 - **FormulaExtractor** — Isolates every `$...$` and `$$...$$` block, captures surrounding variable definitions
@@ -87,13 +87,13 @@ This project solves all of them by building a **deterministic intelligence layer
 - **DensityAnalyzer** — Classifies each section as "math-heavy", "example-heavy", "code-heavy", etc.
 - **LibraryIntelligence** — Cross-references new books against your existing library using TF-IDF cosine similarity
 
-### 🎓 4 Study Modes
+### 4 Study Modes
 - **Deep Dive** — Comprehensive breakdown of every concept and formula
 - **Exam Prep** — Flashcards, practice problems, common traps
 - **Quick Review** — Condensed cheat-sheet summary
 - **Socratic Dialogue** — Interactive teacher-student conversation format
 
-### 🖥️ Chrome Extension UI
+### Chrome Extension UI
 - One-click PDF → Markdown conversion from any browser tab
 - Full library dashboard with book browsing and chapter selection
 - Beautiful in-browser math rendering via KaTeX
@@ -101,7 +101,7 @@ This project solves all of them by building a **deterministic intelligence layer
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 The project is split into two halves: a **Chrome Extension** for the UI, and a **FastAPI Python Server** for the heavy lifting.
 
@@ -158,7 +158,7 @@ PDF File
 
 ---
 
-## 🧩 Detailed Component Breakdown
+## Detailed Component Breakdown
 
 ### 1. The Backend Bridge (`marker_bridge.py`)
 
@@ -289,37 +289,37 @@ The user interface lives in your browser as a Chrome Extension (Manifest V3).
 
 ---
 
-## 🤔 Why Not Just Send the PDF to ChatGPT?
+## Why Not Just Send the PDF to ChatGPT?
 
 Most people's instinct is to drag the PDF into ChatGPT and ask questions. **This approach has fundamental flaws:**
 
-### 1. Cost & Token Efficiency 💸
+### 1. Cost & Token Efficiency
 | | Direct PDF approach | This system |
 |---|---|---|
 | **Per question** | Re-send the whole book every time (~500K tokens) | Send only the pre-built prompt (~5K tokens) |
 | **Processing cost** | Paid API call every single time | One-time free local processing |
 | **Speed** | Minutes per query on large books | Instant (prompts are cached in SQLite) |
 
-### 2. Zero Hallucination 🚫
+### 2. Zero Hallucination
 | | Direct PDF approach | This system |
 |---|---|---|
 | **Definitions** | LLM might paraphrase or invent definitions | Engine extracts the *exact* definition from the text |
 | **Formulas** | LLM might "recall" a wrong formula from training | Engine extracts the *exact* LaTeX from the book |
 | **Variables** | LLM might guess what symbols mean | Engine finds "where $X$ is the design matrix" and attaches it to the formula |
 
-### 3. Long-Term Memory & Cross-Referencing 📚
+### 3. Long-Term Memory & Cross-Referencing
 | | Direct PDF approach | This system |
 |---|---|---|
 | **Context limit** | Can't process 50 books simultaneously | Entire library is indexed and cross-referenced |
 | **Lost in the middle** | Forgets content in the middle of long documents | Chapter-level chunking ensures nothing is lost |
 | **Cross-referencing** | Cannot compare books | TF-IDF engine detects concept overlap across your entire library |
 
-### 4. Reproducibility ♻️
+### 4. Reproducibility
 The engine is **100% deterministic**. Given the same PDF, it produces the exact same analysis every time. No randomness, no temperature settings, no model drift.
 
 ---
 
-## 🎓 Study Modes
+## Study Modes
 
 | Mode | Best for | What the LLM produces |
 |---|---|---|
@@ -330,7 +330,7 @@ The engine is **100% deterministic**. Given the same PDF, it produces the exact 
 
 ---
 
-## 📡 API Reference
+## API Reference
 
 All endpoints are served by the FastAPI backend at `http://localhost:8001`. Interactive docs at `/docs`.
 
@@ -368,7 +368,7 @@ All endpoints are served by the FastAPI backend at `http://localhost:8001`. Inte
 
 ---
 
-## 🚀 Setup & Installation
+## Setup & Installation
 
 ### Prerequisites
 - **Python 3.9+**
@@ -413,7 +413,7 @@ Engine endpoints:
 
 ---
 
-## 📖 How to Use
+## How to Use
 
 ### Quick PDF Conversion
 1. Open any PDF in Chrome
@@ -445,7 +445,7 @@ Engine endpoints:
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 pdf_reader/
@@ -504,7 +504,7 @@ pdf_reader/
 
 ---
 
-## ⚡ Performance
+## Performance
 
 The system is optimized for processing large, multi-hundred-page textbooks:
 
@@ -523,7 +523,7 @@ The system is optimized for processing large, multi-hundred-page textbooks:
 
 ---
 
-## 🧪 Testing
+## Testing
 
 Run the full test suite:
 
@@ -541,7 +541,7 @@ python -m pytest tests/test_performance.py -v      # Performance benchmarks
 
 ---
 
-## 📜 License
+## License
 
 MIT
 
