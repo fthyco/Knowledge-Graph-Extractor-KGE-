@@ -100,7 +100,8 @@ def health():
 def convert(
     pdf_file: UploadFile = File(...),
     pages: str = Form(default=""),
-    force_ocr: bool = Form(default=True),
+    force_ocr: bool = Form(default=False),
+    smart_ocr: bool = Form(default=True),
 ):
     """
     Convert a PDF (or specific pages) to Markdown via marker-pdf.
@@ -108,7 +109,10 @@ def convert(
     - **pdf_file**: The PDF file (multipart upload)
     - **pages**: Comma-separated 1-based page numbers to return.
                  If empty, all pages are returned.
-    - **force_ocr**: Force OCR on all lines (needed for inline math → LaTeX).
+    - **force_ocr**: Force OCR on all lines.
+    - **smart_ocr**: Auto-detect which pages need OCR (default: True).
+                     When enabled, pages are classified as digital/scanned
+                     and OCR is only applied to scanned pages.
     """
     tmp_path = None
     try:
@@ -126,8 +130,11 @@ def convert(
                 if p.isdigit():
                     requested_pages.add(int(p))
 
-        # Run marker conversion
-        markdown_text = _run_marker(tmp_path, force_ocr)
+        # Run marker conversion (smart or legacy mode)
+        if smart_ocr and not force_ocr:
+            markdown_text = _run_marker_smart(tmp_path)
+        else:
+            markdown_text = _run_marker(tmp_path, force_ocr)
 
         # Apply latexfix to detect and compute LaTeX matrices
         try:
@@ -685,7 +692,7 @@ def _find_cross_references(book_id: str, chapter: dict,
 
 
 def _run_marker(filepath: str, force_ocr: bool) -> str:
-    """Run marker-pdf on the given file and return markdown string."""
+    """Run marker-pdf on the given file and return markdown string (legacy mode)."""
     from marker.converters.pdf import PdfConverter
     from marker.config.parser import ConfigParser
     from marker.models import create_model_dict
@@ -703,6 +710,68 @@ def _run_marker(filepath: str, force_ocr: bool) -> str:
 
     rendered = converter(filepath)
     return rendered.markdown
+
+
+def _run_marker_smart(filepath: str) -> str:
+    """
+    Run marker-pdf with Smart OCR — classify pages first,
+    then process digital pages without OCR and scanned pages with OCR.
+    """
+    from marker.converters.pdf import PdfConverter
+    from marker.config.parser import ConfigParser
+    from marker.models import create_model_dict
+    from warehouse.page_classifier import PageClassifier
+
+    # Classify pages (milliseconds)
+    classification = PageClassifier.classify(filepath)
+    print(f"[Smart OCR] /convert: {classification.summary}")
+
+    model_dict = create_model_dict()
+    chunks = []
+
+    # Build tasks: (page_start, page_end, force_ocr)
+    tasks = []
+    digital_runs = PageClassifier.group_contiguous(classification.digital_pages)
+    for run_start, run_end in digital_runs:
+        tasks.append((run_start, run_end, False))
+
+    ocr_runs = PageClassifier.group_contiguous(classification.ocr_pages)
+    for run_start, run_end in ocr_runs:
+        tasks.append((run_start, run_end, True))
+
+    tasks.sort(key=lambda t: t[0])
+
+    if not tasks:
+        # Fallback: process everything without OCR
+        config = {"output_format": "markdown", "force_ocr": False}
+        config_parser = ConfigParser(config)
+        converter = PdfConverter(
+            artifact_dict=model_dict,
+            config=config_parser.generate_config_dict(),
+        )
+        return converter(filepath).markdown
+
+    for page_start, page_end, force_ocr in tasks:
+        label = "OCR" if force_ocr else "text"
+        print(f"  [{label}] pages {page_start+1}–{page_end+1}")
+
+        config = {
+            "output_format": "markdown",
+            "force_ocr": force_ocr,
+            "page_range": f"{page_start}-{page_end}",
+        }
+        config_parser = ConfigParser(config)
+        converter = PdfConverter(
+            artifact_dict=model_dict,
+            config=config_parser.generate_config_dict(),
+        )
+        try:
+            rendered = converter(filepath)
+            chunks.append(rendered.markdown)
+        except Exception as e:
+            print(f"  Warning: pages {page_start}–{page_end} failed: {e}")
+
+    return "\n\n".join(chunks)
 
 
 def _split_by_pages(markdown: str) -> dict:

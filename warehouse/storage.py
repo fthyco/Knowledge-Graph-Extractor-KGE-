@@ -342,8 +342,15 @@ class Storage:
             return None
         return self._row_to_chapter_dict(row, include_text=True)
 
-    def save_chapter(self, chapter: Chapter):
-        """Save a chapter (metadata + text) in a single INSERT."""
+    def save_chapter(self, chapter: Chapter, auto_commit: bool = True):
+        """
+        Save a chapter (metadata + text) in a single INSERT.
+
+        Args:
+            chapter: The Chapter model to save.
+            auto_commit: If True (default), commits immediately.
+                         Set to False for batch operations, then call flush_index().
+        """
         self._conn.execute("""
             INSERT OR REPLACE INTO chapters
             (id, book_id, number, title, level, start_index, end_index,
@@ -361,7 +368,8 @@ class Storage:
             json.dumps(chapter.section_types, ensure_ascii=False),
             chapter.study_status,
         ))
-        self._conn.commit()
+        if auto_commit:
+            self._conn.commit()
 
     # ── Prompts (cached) ───────────────────────────────────
 

@@ -52,7 +52,7 @@ async function convertWithMarker(pdfArrayBuffer, pageNumbers = []) {
       formData.append('pages', pageNumbers.join(','));
     }
 
-    formData.append('force_ocr', 'true');
+    formData.append('smart_ocr', 'true');
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), MARKER_CONFIG.CONVERT_TIMEOUT);

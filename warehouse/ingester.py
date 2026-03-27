@@ -26,6 +26,7 @@ from typing import Optional
 
 from warehouse.models import Book, Chapter, _generate_id
 from warehouse.storage import Storage
+from warehouse.page_classifier import PageClassifier
 from latexfix.pipeline import LatexFix
 from engine.formula_extractor import FormulaExtractor
 from engine.structure_analyzer import StructureAnalyzer
@@ -279,14 +280,12 @@ class Ingester:
         Extract markdown with error handling.
         On success: updates book metadata and saves intermediate state.
         On failure: sets book status to 'error' and raises.
+
+        Note: LatexFix is now applied per-chunk inside _extract_markdown()
+        for better performance on large documents.
         """
         try:
             markdown_text, page_count = self._extract_markdown(pdf_path)
-            # Run LatexFix to patch broken math and matrices
-            try:
-                markdown_text = LatexFix.from_text(markdown_text).run().export_text()
-            except Exception as lf_err:
-                print(f"[Warehouse] LatexFix failed, using raw markdown: {lf_err}")
 
             book.full_markdown = markdown_text
             book.total_pages = page_count
@@ -304,6 +303,7 @@ class Ingester:
         """
         Analyze each chapter (structure, concepts, formulas) and save.
         Uses parallel processing for speed + per-chapter error recovery.
+        Uses a single batch commit at the end for better I/O performance.
         """
         if not chapters:
             return
@@ -333,10 +333,13 @@ class Ingester:
             for ch in chapters
         }
 
-        # Collect results and save as they complete
+        # Collect results and save with deferred commits (batch I/O)
         for future in as_completed(futures):
             ch = future.result()
-            self.storage.save_chapter(ch)
+            self.storage.save_chapter(ch, auto_commit=False)
+
+        # Single batch commit for all chapters
+        self.storage.flush_index()
 
     def _build_knowledge_map_background(self, book: Book, chapters: list[Chapter]):
         """
@@ -428,12 +431,12 @@ class Ingester:
         """
         Extract markdown from PDF using marker-pdf.
 
-        Memory-optimized: writes chunks to temp files instead of
-        holding all in memory, and clears GPU cache between chunks.
+        Smart OCR: pre-classifies pages and only applies OCR to scanned pages.
+        LatexFix: applied per-chunk for faster processing on large documents.
+        Memory-optimized: writes chunks to temp files, clears GPU cache.
         Uses singleton marker models for speed.
         """
         import gc
-        import pypdf
 
         # Reduce memory footprint of surya models to prevent cv2 OutOfMemoryError
         os.environ["LAYOUT_BATCH_SIZE"] = "2"
@@ -443,21 +446,37 @@ class Ingester:
         from marker.converters.pdf import PdfConverter
         from marker.config.parser import ConfigParser
 
-        # Count total pages first
-        with open(pdf_path, "rb") as f:
-            total_pages = len(pypdf.PdfReader(f).pages)
+        # ── Step 1: Smart page classification (milliseconds) ──────────
+        classification = PageClassifier.classify(pdf_path)
+        total_pages = classification.total_pages
+        print(f"[Smart OCR] {classification.summary}")
 
-        config_base = {
-            "output_format": "markdown",
-            "force_ocr": False,
-            "pdftext_workers": 1,
-            "batch_multiplier": 1,
-        }
+        if not classification.digital_pages and not classification.ocr_pages:
+            raise RuntimeError("No processable pages found in PDF")
 
+        # ── Step 2: Build processing tasks ────────────────────────────
+        # Each task: (start_page, end_page, force_ocr, label)
         CHUNK_SIZE = self._get_optimal_chunk_size()
-        total_chunks = max(1, (total_pages + CHUNK_SIZE - 1) // CHUNK_SIZE)
+        tasks: list[tuple[int, int, bool, str]] = []
 
-        # Write chunks to temp dir to avoid holding all in memory
+        # Digital page chunks → fast path (force_ocr=False)
+        digital_runs = PageClassifier.group_contiguous(classification.digital_pages)
+        for run_start, run_end in digital_runs:
+            for cs in range(run_start, run_end + 1, CHUNK_SIZE):
+                ce = min(cs + CHUNK_SIZE - 1, run_end)
+                tasks.append((cs, ce, False, "digital"))
+
+        # Scanned page chunks → full OCR path (force_ocr=True)
+        ocr_runs = PageClassifier.group_contiguous(classification.ocr_pages)
+        for run_start, run_end in ocr_runs:
+            for cs in range(run_start, run_end + 1, CHUNK_SIZE):
+                ce = min(cs + CHUNK_SIZE - 1, run_end)
+                tasks.append((cs, ce, True, "OCR"))
+
+        # Sort by page start to maintain document order
+        tasks.sort(key=lambda t: t[0])
+
+        # ── Step 3: Process each task ─────────────────────────────────
         import tempfile
         chunks_dir = Path(tempfile.mkdtemp(prefix="pdf_chunks_"))
         chunk_count = 0
@@ -465,27 +484,43 @@ class Ingester:
         # Use singleton models — loaded once, reused forever
         model_dict = _get_marker_models()
 
-        for i, start in enumerate(range(0, total_pages, CHUNK_SIZE)):
-            end = min(start + CHUNK_SIZE, total_pages)
-            print(f"[Warehouse] Processing chunk {i+1}/{total_chunks} "
-                  f"(pages {start+1}\u2013{end} of {total_pages})...")
+        for i, (page_start, page_end, force_ocr, label) in enumerate(tasks):
+            pages_in_chunk = page_end - page_start + 1
+            print(
+                f"[Warehouse] Chunk {i+1}/{len(tasks)} [{label}] "
+                f"(pages {page_start+1}\u2013{page_end+1}, "
+                f"{'OCR' if force_ocr else 'text-only'}, {pages_in_chunk} pages)"
+            )
 
-            config = {**config_base, "page_range": f"{start}-{end - 1}"}
+            config = {
+                "output_format": "markdown",
+                "force_ocr": force_ocr,
+                "pdftext_workers": 1,
+                "batch_multiplier": 1,
+                "page_range": f"{page_start}-{page_end}",
+            }
             config_parser = ConfigParser(config)
             converter = PdfConverter(
                 artifact_dict=model_dict,
-                config=config_parser.generate_config_dict()
+                config=config_parser.generate_config_dict(),
             )
 
             try:
                 rendered = converter(pdf_path)
-                # Write to disk immediately instead of accumulating in list
+                chunk_md = rendered.markdown
+
+                # Apply LatexFix per-chunk (faster than full-text)
+                try:
+                    chunk_md = LatexFix.from_text(chunk_md).run().export_text()
+                except Exception as lf_err:
+                    print(f"[Warehouse] LatexFix skipped for chunk {i+1}: {lf_err}")
+
                 chunk_path = chunks_dir / f"chunk_{i:04d}.md"
-                chunk_path.write_text(rendered.markdown, encoding="utf-8")
+                chunk_path.write_text(chunk_md, encoding="utf-8")
                 chunk_count += 1
                 del rendered
             except Exception as e:
-                print(f"[Warehouse] Warning: chunk {start}\u2013{end} failed: {e}")
+                print(f"[Warehouse] Warning: chunk {page_start}\u2013{page_end} failed: {e}")
                 continue
             finally:
                 del converter
@@ -502,7 +537,7 @@ class Ingester:
             shutil.rmtree(chunks_dir, ignore_errors=True)
             raise RuntimeError("All chunks failed during markdown extraction")
 
-        # Reassemble from disk
+        # ── Step 4: Reassemble from disk ──────────────────────────────
         full_markdown = "\n\n".join(
             f.read_text(encoding="utf-8")
             for f in sorted(chunks_dir.glob("*.md"))
