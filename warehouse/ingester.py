@@ -3,6 +3,13 @@ ingester.py — PDF → Marker → Chapter Detection → Storage pipeline.
 
 Takes a raw PDF, processes it through the marker pipeline,
 detects chapter boundaries, and stores the structured result.
+
+Performance-optimized:
+  - Singleton marker models (loaded once, reused across all books)
+  - Parallel chapter analysis via ThreadPoolExecutor
+  - Memory cleanup after chapter detection
+  - Batched storage writes
+  - Background knowledge map building
 """
 
 from __future__ import annotations
@@ -11,7 +18,9 @@ import hashlib
 import os
 import re
 import shutil
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -21,10 +30,41 @@ from latexfix.pipeline import LatexFix
 from engine.formula_extractor import FormulaExtractor
 from engine.structure_analyzer import StructureAnalyzer
 from engine.concept_extractor import ConceptExtractor
+from engine.metadata_extractor import MetadataExtractor
+
+
+# ── Singleton Marker Models ─────────────────────────────────
+# Loaded once on first use, reused for all subsequent conversions.
+# This avoids the ~5-15 second model loading overhead per book.
+
+_marker_models = None
+_marker_models_lock = threading.Lock()
+
+
+def _get_marker_models():
+    """Get or create the singleton marker model dict."""
+    global _marker_models
+    if _marker_models is not None:
+        return _marker_models
+
+    with _marker_models_lock:
+        # Double-check after acquiring lock
+        if _marker_models is not None:
+            return _marker_models
+
+        print("[Perf] Loading marker models (one-time)...")
+        t0 = time.perf_counter()
+        from marker.models import create_model_dict
+        _marker_models = create_model_dict()
+        print(f"[Perf] Marker models loaded in {time.perf_counter() - t0:.1f}s")
+        return _marker_models
 
 
 class Ingester:
     """Pipeline: raw PDF → extracted markdown → detected chapters → stored."""
+
+    # Thread pool for parallel chapter analysis (shared across invocations)
+    _analysis_pool = ThreadPoolExecutor(max_workers=4)
 
     def __init__(self, raw_dir: str, storage: Storage):
         self.raw_dir = Path(raw_dir)
@@ -37,9 +77,11 @@ class Ingester:
         1. Copy PDF to raw_source/
         2. Extract markdown via marker
         3. Detect chapters
-        4. Store book + chapters
-        5. Return book record
+        4. Analyze & store book + chapters (parallel, per-chapter error recovery)
+        5. Build knowledge map (background)
+        6. Return book record
         """
+        pipeline_start = time.perf_counter()
         pdf_path = Path(pdf_path)
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -59,75 +101,44 @@ class Ingester:
             pdf_path=str(stored_path),
         )
         book.status = "processing"
-        self.storage.save_book(book)
+        self.storage.save_book(book, defer_index=True)
         print(f"[Warehouse] Created book: {book.id} — {book.title}")
 
         # Step 3: Extract markdown
-        try:
-            markdown_text, page_count = self._extract_markdown(str(stored_path))
-            # Run LatexFix to patch broken math and matrices
-            markdown_text = LatexFix.from_text(markdown_text).run().export_text()
-            
-            book.full_markdown = markdown_text
-            book.total_pages = page_count
-            book.total_words = len(markdown_text.split())
-            print(f"[Warehouse] Extracted {page_count} pages, {book.total_words} words")
-        except Exception as e:
-            book.status = "error"
-            self.storage.save_book(book)
-            raise RuntimeError(f"Markdown extraction/processing failed: {e}") from e
+        t0 = time.perf_counter()
+        markdown_text, page_count = self._extract_markdown_safe(book, str(stored_path))
+        print(f"[Perf] Markdown extraction: {time.perf_counter() - t0:.1f}s")
+
+        # Step 3.5: Auto-extract metadata from PDF + content
+        t0 = time.perf_counter()
+        self._extract_metadata(book, str(stored_path), markdown_text)
+        print(f"[Perf] Metadata extraction: {time.perf_counter() - t0:.1f}s")
 
         # Step 4: Detect chapters
+        t0 = time.perf_counter()
         chapters = self._detect_chapters(markdown_text, book.id)
         book.total_chapters = len(chapters)
         book.chapter_ids = [ch.id for ch in chapters]
-        print(f"[Warehouse] Detected {len(chapters)} chapters")
+        print(f"[Perf] Chapter detection: {time.perf_counter() - t0:.1f}s — {len(chapters)} chapters")
 
-        # Step 5: Extract formulas, concepts, and structure. Save everything
-        formula_extractor = FormulaExtractor()
-        structure_analyzer = StructureAnalyzer()
-        concept_extractor = ConceptExtractor()
+        # Memory cleanup: release full markdown from book object
+        # It's already saved to disk by _extract_markdown_safe
+        book.full_markdown = ""
 
-        for ch in chapters:
-            structure = structure_analyzer.analyze(ch.full_text)
-            ch.concepts = [
-                c for c in concept_extractor.extract(ch.full_text, structure)
-                if c.get("importance") in ("high", "medium")
-            ]
-            ch.formulas = formula_extractor.extract(ch.full_text)
-            self.storage.save_chapter(ch)
+        # Step 5: Analyze & save chapters (parallel, per-chapter error recovery)
+        t0 = time.perf_counter()
+        self._analyze_and_save_chapters(chapters)
+        print(f"[Perf] Chapter analysis: {time.perf_counter() - t0:.1f}s")
 
+        # Step 6: Mark as ready and save (flush index now)
         book.status = "ready"
-        
-        # Only run if warehouse has other books
-        all_books = self.storage.list_books()
-        other_books = [b for b in all_books if b["id"] != book.id]
-
-        if other_books:
-            from engine import Engine
-            engine = Engine()
-
-            # Build chapters map for warehouse books
-            warehouse_chapters_map = {}
-            for wb in other_books:
-                wb_chapters = []
-                for ch_id in wb.get("chapter_ids", []):
-                    ch_dict = self.storage.get_chapter(wb["id"], ch_id)
-                    if ch_dict:
-                        wb_chapters.append(ch_dict)
-                warehouse_chapters_map[wb["id"]] = wb_chapters
-
-            input_chapters_dicts = [ch.to_dict() for ch in chapters]
-            knowledge_map = engine.map_knowledge(
-                input_book=book.to_dict(),
-                input_chapters=input_chapters_dicts,
-                warehouse_books=other_books,
-                warehouse_chapters_map=warehouse_chapters_map,
-            )
-            book.similar_books = knowledge_map["matches"]
-
         self.storage.save_book(book)
 
+        # Step 7: Knowledge map in background (non-blocking)
+        self._build_knowledge_map_background(book, chapters)
+
+        total = time.perf_counter() - pipeline_start
+        print(f"[Perf] ═══ Total ingestion: {total:.1f}s ═══")
         return book.to_dict()
 
     def scan_directory(self) -> list[dict]:
@@ -162,8 +173,11 @@ class Ingester:
         1. Create book record
         2. Extract markdown via marker
         3. Detect chapters
-        4. Store everything
+        4. Analyze & store (parallel, per-chapter error recovery)
+        5. Build knowledge map (background)
         """
+        pipeline_start = time.perf_counter()
+
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
@@ -177,62 +191,192 @@ class Ingester:
             pdf_path=str(pdf_path),
         )
         book.status = "processing"
-        self.storage.save_book(book)
+        self.storage.save_book(book, defer_index=True)
         print(f"[Warehouse] Created book: {book.id} — {book.title}")
 
         # Extract markdown
-        try:
-            markdown_text, page_count = self._extract_markdown(str(pdf_path))
-            # Run LatexFix to patch broken math and matrices
-            markdown_text = LatexFix.from_text(markdown_text).run().export_text()
-            
-            book.full_markdown = markdown_text
-            book.total_pages = page_count
-            book.total_words = len(markdown_text.split())
-            print(f"[Warehouse] Extracted {page_count} pages, {book.total_words} words")
-        except Exception as e:
-            book.status = "error"
-            self.storage.save_book(book)
-            raise RuntimeError(f"Markdown extraction/processing failed: {e}") from e
+        t0 = time.perf_counter()
+        markdown_text, page_count = self._extract_markdown_safe(book, str(pdf_path))
+        print(f"[Perf] Markdown extraction: {time.perf_counter() - t0:.1f}s")
+
+        # Auto-extract metadata
+        t0 = time.perf_counter()
+        self._extract_metadata(book, str(pdf_path), markdown_text)
+        print(f"[Perf] Metadata extraction: {time.perf_counter() - t0:.1f}s")
 
         # Detect chapters
+        t0 = time.perf_counter()
         chapters = self._detect_chapters(markdown_text, book.id)
         book.total_chapters = len(chapters)
         book.chapter_ids = [ch.id for ch in chapters]
-        print(f"[Warehouse] Detected {len(chapters)} chapters")
+        print(f"[Perf] Chapter detection: {time.perf_counter() - t0:.1f}s — {len(chapters)} chapters")
 
-        # Save everything
-        formula_extractor = FormulaExtractor()
-        structure_analyzer = StructureAnalyzer()
-        concept_extractor = ConceptExtractor()
+        # Memory cleanup
+        book.full_markdown = ""
 
-        for ch in chapters:
-            structure = structure_analyzer.analyze(ch.full_text)
-            ch.concepts = [
-                c for c in concept_extractor.extract(ch.full_text, structure)
-                if c.get("importance") in ("high", "medium")
-            ]
-            ch.formulas = formula_extractor.extract(ch.full_text)
+        # Analyze & save chapters (parallel)
+        t0 = time.perf_counter()
+        self._analyze_and_save_chapters(chapters)
+        print(f"[Perf] Chapter analysis: {time.perf_counter() - t0:.1f}s")
+
+        # Mark ready and flush
+        book.status = "ready"
+        self.storage.save_book(book)
+
+        # Knowledge map in background
+        self._build_knowledge_map_background(book, chapters)
+
+        total = time.perf_counter() - pipeline_start
+        print(f"[Perf] ═══ Total ingestion: {total:.1f}s ═══")
+        return book.to_dict()
+
+    # ── Shared pipeline helpers ─────────────────────────────
+
+    def _extract_metadata(self, book: Book, pdf_path: str, markdown_text: str):
+        """
+        Auto-extract metadata from PDF properties and content.
+        Only fills in fields that are empty (doesn't override user-provided values).
+        """
+        try:
+            import pypdf
+
+            # Read PDF info dict
+            pdf_info = None
+            try:
+                with open(pdf_path, "rb") as f:
+                    reader = pypdf.PdfReader(f)
+                    pdf_info = dict(reader.metadata) if reader.metadata else None
+            except Exception:
+                pass
+
+            # Get first ~3000 chars as "first pages" text
+            first_pages = markdown_text[:3000] if markdown_text else ""
+
+            extractor = MetadataExtractor()
+            meta = extractor.extract(
+                pdf_info=pdf_info,
+                first_pages_text=first_pages,
+                full_text=markdown_text,
+                title=book.title,
+            )
+
+            # Only fill empty fields
+            if not book.author and meta.get("author"):
+                book.author = meta["author"]
+            if not book.subject and meta.get("subject"):
+                book.subject = meta["subject"]
+
+            # Log what we found
+            found = [f"{k}={v}" for k, v in meta.items() if v]
+            if found:
+                print(f"[Warehouse] Auto-detected metadata: {', '.join(found)}")
+
+        except Exception as e:
+            print(f"[Warehouse] Metadata extraction failed (non-fatal): {e}")
+
+    def _extract_markdown_safe(self, book: Book, pdf_path: str) -> tuple[str, int]:
+        """
+        Extract markdown with error handling.
+        On success: updates book metadata and saves intermediate state.
+        On failure: sets book status to 'error' and raises.
+        """
+        try:
+            markdown_text, page_count = self._extract_markdown(pdf_path)
+            # Run LatexFix to patch broken math and matrices
+            try:
+                markdown_text = LatexFix.from_text(markdown_text).run().export_text()
+            except Exception as lf_err:
+                print(f"[Warehouse] LatexFix failed, using raw markdown: {lf_err}")
+
+            book.full_markdown = markdown_text
+            book.total_pages = page_count
+            book.total_words = len(markdown_text.split())
+            # Save markdown to disk but defer index update
+            self.storage.save_book(book, defer_index=True)
+            print(f"[Warehouse] Extracted {page_count} pages, {book.total_words} words")
+            return markdown_text, page_count
+        except Exception as e:
+            book.status = "error"
+            self.storage.save_book(book)
+            raise RuntimeError(f"Markdown extraction failed: {e}") from e
+
+    def _analyze_and_save_chapters(self, chapters: list[Chapter]):
+        """
+        Analyze each chapter (structure, concepts, formulas) and save.
+        Uses parallel processing for speed + per-chapter error recovery.
+        """
+        if not chapters:
+            return
+
+        def _analyze_single(ch: Chapter) -> Chapter:
+            """Analyze a single chapter — runs in thread pool."""
+            try:
+                # Each thread gets its own analyzer instances (they're stateless)
+                structure_analyzer = StructureAnalyzer()
+                concept_extractor = ConceptExtractor()
+                formula_extractor = FormulaExtractor()
+
+                structure = structure_analyzer.analyze(ch.full_text)
+                ch.concepts = [
+                    c for c in concept_extractor.extract(ch.full_text, structure)
+                    if c.get("importance") in ("high", "medium")
+                ]
+                ch.formulas = formula_extractor.extract(ch.full_text)
+            except Exception as e:
+                print(f"[Warehouse] ⚠ Analysis failed for ch {ch.number} "
+                      f"'{ch.title}': {e}")
+            return ch
+
+        # Submit all chapters to thread pool
+        futures = {
+            self._analysis_pool.submit(_analyze_single, ch): ch
+            for ch in chapters
+        }
+
+        # Collect results and save as they complete
+        for future in as_completed(futures):
+            ch = future.result()
             self.storage.save_chapter(ch)
 
-        book.status = "ready"
-        
-        # Only run if warehouse has other books
-        all_books = self.storage.list_books()
-        other_books = [b for b in all_books if b["id"] != book.id]
+    def _build_knowledge_map_background(self, book: Book, chapters: list[Chapter]):
+        """
+        Build knowledge map in a background daemon thread.
+        This way the ingestion returns immediately while the map builds.
+        """
+        def _build():
+            try:
+                t0 = time.perf_counter()
+                self._build_knowledge_map(book, chapters)
+                self.storage.save_book(book)
+                print(f"[Perf] Knowledge map: {time.perf_counter() - t0:.1f}s (background)")
+            except Exception as e:
+                print(f"[Warehouse] ⚠ Background knowledge map failed: {e}")
 
-        if other_books:
+        thread = threading.Thread(target=_build, daemon=True)
+        thread.start()
+
+    def _build_knowledge_map(self, book: Book, chapters: list[Chapter]):
+        """
+        Compare this book against other books in the warehouse.
+        Safely skips if no other books or if comparison fails.
+
+        Optimized: uses summary cache to avoid loading all chapter files.
+        """
+        try:
+            all_books = self.storage.list_books()
+            other_books = [b for b in all_books if b["id"] != book.id]
+
+            if not other_books:
+                return
+
             from engine import Engine
             engine = Engine()
 
-            # Build chapters map for warehouse books
+            # Use get_chapters() which returns metadata WITHOUT full_text
+            # This avoids loading large .md files for every chapter
             warehouse_chapters_map = {}
             for wb in other_books:
-                wb_chapters = []
-                for ch_id in wb.get("chapter_ids", []):
-                    ch_dict = self.storage.get_chapter(wb["id"], ch_id)
-                    if ch_dict:
-                        wb_chapters.append(ch_dict)
+                wb_chapters = self.storage.get_chapters(wb["id"])
                 warehouse_chapters_map[wb["id"]] = wb_chapters
 
             input_chapters_dicts = [ch.to_dict() for ch in chapters]
@@ -243,10 +387,9 @@ class Ingester:
                 warehouse_chapters_map=warehouse_chapters_map,
             )
             book.similar_books = knowledge_map["matches"]
-
-        self.storage.save_book(book)
-
-        return book.to_dict()
+        except Exception as e:
+            print(f"[Warehouse] ⚠ Knowledge map failed (non-fatal): {e}")
+            # Non-fatal — book is still usable without knowledge map
 
     # ── Step 1: Store raw PDF ───────────────────────────────
 
@@ -282,7 +425,13 @@ class Ingester:
         return max(10, min(chunk, 80))
 
     def _extract_markdown(self, pdf_path: str) -> tuple[str, int]:
-        """Extract markdown from PDF using marker-pdf."""
+        """
+        Extract markdown from PDF using marker-pdf.
+
+        Memory-optimized: writes chunks to temp files instead of
+        holding all in memory, and clears GPU cache between chunks.
+        Uses singleton marker models for speed.
+        """
         import gc
         import pypdf
 
@@ -293,7 +442,6 @@ class Ingester:
 
         from marker.converters.pdf import PdfConverter
         from marker.config.parser import ConfigParser
-        from marker.models import create_model_dict
 
         # Count total pages first
         with open(pdf_path, "rb") as f:
@@ -307,13 +455,20 @@ class Ingester:
         }
 
         CHUNK_SIZE = self._get_optimal_chunk_size()
-        all_markdown_parts = []
+        total_chunks = max(1, (total_pages + CHUNK_SIZE - 1) // CHUNK_SIZE)
 
-        model_dict = create_model_dict()  # Load models only once
+        # Write chunks to temp dir to avoid holding all in memory
+        import tempfile
+        chunks_dir = Path(tempfile.mkdtemp(prefix="pdf_chunks_"))
+        chunk_count = 0
 
-        for start in range(0, total_pages, CHUNK_SIZE):
+        # Use singleton models — loaded once, reused forever
+        model_dict = _get_marker_models()
+
+        for i, start in enumerate(range(0, total_pages, CHUNK_SIZE)):
             end = min(start + CHUNK_SIZE, total_pages)
-            print(f"[Warehouse] Processing pages {start+1}–{end} of {total_pages}...")
+            print(f"[Warehouse] Processing chunk {i+1}/{total_chunks} "
+                  f"(pages {start+1}\u2013{end} of {total_pages})...")
 
             config = {**config_base, "page_range": f"{start}-{end - 1}"}
             config_parser = ConfigParser(config)
@@ -324,18 +479,35 @@ class Ingester:
 
             try:
                 rendered = converter(pdf_path)
-                all_markdown_parts.append(rendered.markdown)
+                # Write to disk immediately instead of accumulating in list
+                chunk_path = chunks_dir / f"chunk_{i:04d}.md"
+                chunk_path.write_text(rendered.markdown, encoding="utf-8")
+                chunk_count += 1
+                del rendered
             except Exception as e:
-                print(f"[Warehouse] Warning: chunk {start}–{end} failed: {e}")
+                print(f"[Warehouse] Warning: chunk {start}\u2013{end} failed: {e}")
                 continue
             finally:
                 del converter
                 gc.collect()
+                # Clear CUDA cache if GPU is available
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
 
-        if not all_markdown_parts:
+        if chunk_count == 0:
+            shutil.rmtree(chunks_dir, ignore_errors=True)
             raise RuntimeError("All chunks failed during markdown extraction")
 
-        full_markdown = "\n\n".join(all_markdown_parts)
+        # Reassemble from disk
+        full_markdown = "\n\n".join(
+            f.read_text(encoding="utf-8")
+            for f in sorted(chunks_dir.glob("*.md"))
+        )
+        shutil.rmtree(chunks_dir, ignore_errors=True)
 
         # Estimate page count from page break markers
         page_breaks = len(re.findall(r'\n-{3,}\n', full_markdown))

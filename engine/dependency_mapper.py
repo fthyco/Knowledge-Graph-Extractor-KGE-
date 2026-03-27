@@ -140,8 +140,12 @@ class DependencyMapper:
         for match in self.COMPARISON_RE.finditer(text):
             if match.group(1):
                 term = match.group(1).strip()
+                # Get surrounding sentence for context to find the other concept
+                ctx_start = max(0, match.start() - 200)
+                ctx_end = min(len(text), match.end() + 200)
+                context = text[ctx_start:ctx_end]
                 edges.extend(
-                    self._match_concept_edge(term, concept_names_lower, "compared_with")
+                    self._match_concept_edge(term, context, concept_names_lower, "compared_with")
                 )
             elif match.group(2) and match.group(3):
                 term_a = match.group(2).strip()
@@ -227,13 +231,30 @@ class DependencyMapper:
 
         return None
 
-    def _match_concept_edge(self, term: str, concept_lookup: dict,
+    def _match_concept_edge(self, term: str, context: str,
+                            concept_lookup: dict,
                             edge_type: str) -> list[dict]:
-        """Try to create edges from a term to matching concepts."""
+        """
+        Create edges between a term and other known concepts
+        found nearby in the surrounding context text.
+        """
         matched = self._find_concept(term, concept_lookup)
         if not matched:
             return []
-        return []  # Need context of what it's compared to
+
+        # Find other known concepts mentioned in the surrounding context
+        edges = []
+        context_lower = context.lower()
+        for name_lower, name in concept_lookup.items():
+            if name_lower == matched.lower():
+                continue  # skip self
+            if name_lower in context_lower:
+                edges.append({
+                    "from": matched,
+                    "to": name,
+                    "type": edge_type,
+                })
+        return edges
 
     def _extract_list_items(self, text: str) -> list[str]:
         """Extract individual items from a comma/and separated list."""
@@ -246,20 +267,46 @@ class DependencyMapper:
         """
         Find clusters of concepts that appear together frequently.
         Split text into paragraphs and find concepts that co-occur.
+
+        Optimized: pre-builds a word-set for each paragraph and uses
+        set operations for fast concept lookup instead of O(n) substring
+        scanning per concept per paragraph.
         """
+        if not concept_names:
+            return []
+
         paragraphs = re.split(r'\n\s*\n', text)
         co_occurrence = defaultdict(set)
-        text_lower_cache = {}
+
+        # Pre-compute: for multi-word concepts, we need substring matching.
+        # For single-word concepts, we can use set membership (much faster).
+        single_word = {}   # lower_name -> original_name
+        multi_word = {}    # lower_name -> original_name
+        for name in concept_names:
+            lower = name.lower()
+            if ' ' in lower or '-' in lower:
+                multi_word[lower] = name
+            else:
+                single_word[lower] = name
 
         for para in paragraphs:
+            if len(para.split()) < 5:
+                continue  # skip tiny paragraphs
+
             para_lower = para.lower()
-            present = []
-            for name in concept_names:
-                name_lower = name.lower()
-                if name_lower in para_lower:
+
+            # Fast path: single-word concepts via set intersection
+            para_words = set(re.findall(r'\b\w+\b', para_lower))
+            present = [single_word[w] for w in para_words & single_word.keys()]
+
+            # Slower path: multi-word concepts via substring check
+            for lower, name in multi_word.items():
+                if lower in para_lower:
                     present.append(name)
 
-            # Record co-occurrences
+            # Record co-occurrences (skip if < 2 concepts)
+            if len(present) < 2:
+                continue
             for i, a in enumerate(present):
                 for b in present[i + 1:]:
                     co_occurrence[a].add(b)

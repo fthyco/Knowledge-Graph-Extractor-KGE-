@@ -571,3 +571,120 @@ body {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* ─── Chapter Status ────────────────────────────────────── */
+.ch-status {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  margin-right: 12px;
+  flex-shrink: 0;
+  transition: all var(--transition);
+  font-size: 14px;
+  padding-bottom: 2px;
+}
+
+.ch-status:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.status-not-started { color: var(--text-muted); }
+.status-in-progress { color: #f59e0b; } /* Amber */
+.status-completed   { color: var(--accent); }
+
+/* ─── Multi-Select Checkmark ────────────────────────────── */
+.book-check {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  border: 1.5px solid var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  color: transparent;
+  transition: all var(--transition);
+}
+
+.book-item.active .book-check {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ─── Book Group Headers (Multi-Book Chapter View) ──────── */
+.book-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 6px;
+  margin-top: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.book-group-header:first-child {
+  margin-top: 0;
+}
+
+.book-group-icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.book-group-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book-group-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+/* ─── Per-Chapter Analyze Button ────────────────────────── */
+.ch-analyze-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+  margin-left: 10px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chapter-item:hover .ch-analyze-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ch-analyze-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+

@@ -53,9 +53,9 @@
     <!-- Chapter List View -->
     <div class="chapter-view" id="chapter-view" style="display:none">
       <div class="chapter-header">
-        <button class="text-btn" id="btn-back">← Library</button>
-        <h2 id="book-title"></h2>
-        <span class="muted" id="book-stats"></span>
+        <button class="text-btn" id="btn-deselect-all">✕ Deselect All</button>
+        <h2 id="selection-title"></h2>
+        <span class="muted" id="selection-stats"></span>
       </div>
 
       <div class="knowledge-panel" id="knowledge-panel" style="display:none">
@@ -126,7 +126,10 @@
     <div class="overlay-card">
       <div class="spinner"></div>
       <p id="upload-status">Uploading and processing...</p>
-      <span class="muted">This may take a minute for large books</span>
+      <div class="progress-bar-container" style="width: 100%; background: var(--bg-secondary); border-radius: 6px; height: 6px; margin: 12px 0; overflow: hidden;">
+        <div id="upload-progress-fill" style="width: 0%; height: 100%; background: var(--accent); border-radius: 6px; transition: width 0.4s ease;"></div>
+      </div>
+      <span class="muted" id="upload-step">Preparing...</span>
     </div>
   </div>
 

@@ -77,9 +77,9 @@ class Warehouse:
 
     # ── Maintenance ────────────────────────────────────────
     def clear_errors(self) -> int:
-        """Remove all books with status 'error' from the index."""
-        index = self.storage._read_index()
-        errors = [b for b in index if b.get("status") == "error"]
+        """Remove all books with status 'error'."""
+        all_books = self.storage.list_books()
+        errors = [b for b in all_books if b.get("status") == "error"]
         for book in errors:
             self.storage.delete_book(book["id"])
         return len(errors)

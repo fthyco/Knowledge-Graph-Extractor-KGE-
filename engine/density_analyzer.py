@@ -61,6 +61,26 @@ class DensityAnalyzer:
         re.IGNORECASE
     )
 
+    # Proof markers
+    PROOF_RE = re.compile(
+        r'(?:Q\.E\.D\.|\u220e|\u25a0|\bproof\b|'
+        r'\btherefore\b|\bhence\b|\bit\s+follows|'
+        r'\bwe\s+conclude|\bwe\s+have\s+shown|'
+        r'\bsufficiency|\bnecessity|'
+        r'\bby\s+(?:induction|contradiction|contrapositive))',
+        re.IGNORECASE
+    )
+
+    # Problem/exercise markers
+    PROBLEM_RE = re.compile(
+        r'(?:\bexercise\b|\bproblem\b|\bquestion\b|'
+        r'\bfind\s+(?:the|a|an)\b|\bshow\s+that\b|'
+        r'\bprove\s+that\b|\bcalculate\b|\bcompute\b|'
+        r'\bdetermine\b|\bverify\s+that\b|'
+        r'\bhomework|\bassignment)',
+        re.IGNORECASE
+    )
+
     # Display math
     DISPLAY_MATH_RE = re.compile(r'\$\$.+?\$\$', re.DOTALL)
 
@@ -182,6 +202,10 @@ class DensityAnalyzer:
         # Lists (bullet/numbered)
         list_count = len(re.findall(r'^[\s]*[-*•]\s+|^\s*\d+\.\s+', text, re.MULTILINE))
 
+        # Proof and problem indicators
+        proof_count = len(self.PROOF_RE.findall(text))
+        problem_count = len(self.PROBLEM_RE.findall(text))
+
         # Compute ratios (per paragraph)
         return {
             "word_count": word_count,
@@ -202,6 +226,10 @@ class DensityAnalyzer:
             "bold_count": bold_count,
             "list_ratio": list_count / para_count,
             "list_count": list_count,
+            "proof_ratio": proof_count / para_count,
+            "proof_count": proof_count,
+            "problem_ratio": problem_count / para_count,
+            "problem_count": problem_count,
         }
 
     def _empty_stats(self) -> dict:
@@ -212,6 +240,7 @@ class DensityAnalyzer:
             "example_count", "comparison_ratio", "comparison_count",
             "algorithm_ratio", "definition_ratio", "definition_count",
             "bold_ratio", "bold_count", "list_ratio", "list_count",
+            "proof_ratio", "proof_count", "problem_ratio", "problem_count",
         ]}
 
     def _classify(self, stats: dict) -> list[str]:
@@ -225,6 +254,8 @@ class DensityAnalyzer:
             "example-rich": 0.0,
             "implementation-focused": 0.0,
             "comparison": 0.0,
+            "proof-heavy": 0.0,
+            "problem-set": 0.0,
             "introductory": 0.0,
         }
 
@@ -263,6 +294,22 @@ class DensityAnalyzer:
             scores["comparison"] += 2.5
         elif stats["comparison_ratio"] >= 0.15:
             scores["comparison"] += 1.0
+
+        # Proof-heavy
+        if stats.get("proof_ratio", 0) >= 0.3:
+            scores["proof-heavy"] += 3.0
+        elif stats.get("proof_ratio", 0) >= 0.15:
+            scores["proof-heavy"] += 1.5
+        if stats.get("proof_count", 0) >= 5:
+            scores["proof-heavy"] += 1.0
+
+        # Problem-set
+        if stats.get("problem_ratio", 0) >= 0.3:
+            scores["problem-set"] += 3.0
+        elif stats.get("problem_ratio", 0) >= 0.15:
+            scores["problem-set"] += 1.5
+        if stats.get("problem_count", 0) >= 5:
+            scores["problem-set"] += 1.5
 
         # Introductory (low density of everything, short)
         if stats["word_count"] < 300:

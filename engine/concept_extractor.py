@@ -83,6 +83,28 @@ class ConceptExtractor:
         "note", "see", "also", "however", "therefore", "thus", "hence",
     }
 
+    # Theorem/Lemma/Definition block patterns (for math textbooks)
+    THEOREM_BLOCK_RE = re.compile(
+        r'(?:^|\n)\s*\*?\*?'
+        r'(Theorem|Lemma|Definition|Corollary|Proposition|Axiom|Conjecture)'
+        r'\s*[\d.]*\*?\*?'
+        r'\s*[:(.\-]\s*'
+        r'(.+?)(?=\n\s*\*?\*?(?:Theorem|Lemma|Definition|Corollary|'
+        r'Proposition|Axiom|Conjecture|Proof|$)|\n\n)',
+        re.DOTALL | re.IGNORECASE
+    )
+
+    # Capitalized multi-word terms appearing for the first time
+    FIRST_USE_RE = re.compile(
+        r'\b((?:[A-Z][a-z]{2,}(?:\s+|-)){1,3}[A-Z][a-z]{2,})\b'
+    )
+
+    # Additional noise for first-use detection
+    FIRST_USE_NOISE = {
+        "the", "this", "that", "these", "those", "also", "each",
+        "many", "more", "most", "some", "other", "such", "very",
+    }
+
     def extract(self, text: str, structure: dict | None = None) -> list[dict]:
         """
         Extract key concepts from chapter text.
@@ -119,6 +141,18 @@ class ConceptExtractor:
 
         # 7. Extract hyphenated technical terms
         self._extract_hyphenated(text, concepts)
+
+        # ── Fallback strategies for poorly-formatted texts ──
+        # These activate only when the primary extractors find too few concepts
+
+        if len(concepts) < 5:
+            self._extract_theorem_blocks(text, concepts)
+
+        if len(concepts) < 5:
+            self._extract_tfidf_terms(text, concepts)
+
+        if len(concepts) < 3:
+            self._extract_first_use_terms(text, concepts)
 
         # 8. Count mentions for importance ranking
         self._count_mentions(text, concepts)
@@ -248,12 +282,125 @@ class ConceptExtractor:
             if count >= 2 and not self._is_noise(term):
                 self._add_concept(concepts, term, "", "hyphenated")
 
+    # ── Fallback extraction methods ──────────────────────────
+
+    def _extract_theorem_blocks(self, text: str, concepts: dict):
+        """
+        Fallback 1: Detect Theorem/Lemma/Definition blocks in math textbooks.
+        These books often don't use bold formatting but have structured blocks.
+        """
+        for match in self.THEOREM_BLOCK_RE.finditer(text):
+            block_type = match.group(1).strip()
+            content = match.group(2).strip()
+
+            # Use the first sentence as definition (truncated)
+            definition = content[:200]
+            first_sentence = re.match(r'^(.+?[.!?])\s', content)
+            if first_sentence:
+                definition = first_sentence.group(1)
+
+            # Name: "Theorem 3.1" or first key phrase
+            name = block_type
+            # Try to find a descriptive name in parentheses
+            name_match = re.search(r'\(([^)]{3,40})\)', content[:80])
+            if name_match:
+                name = name_match.group(1)
+
+            self._add_concept(concepts, name, definition, "theorem_block")
+
+    def _extract_tfidf_terms(self, text: str, concepts: dict):
+        """
+        Fallback 2: Extract significant terms using frequency analysis.
+        Counts consecutive word pairs (bigrams) to find repeated technical terms.
+        """
+        # Tokenize into lowercase words (letters only)
+        words = re.findall(r'\b[A-Za-z]{2,}\b', text)
+
+        # Build bigrams
+        bigrams = []
+        for i in range(len(words) - 1):
+            w1, w2 = words[i].lower(), words[i + 1].lower()
+            # Skip if either word is noise
+            if w1 in self.NOISE_WORDS or w2 in self.NOISE_WORDS:
+                continue
+            bigram = f"{w1} {w2}"
+            if len(bigram) > 5:
+                bigrams.append(bigram)
+
+        term_freq = Counter(bigrams)
+
+        existing_keys = set(concepts.keys())
+
+        for term, count in term_freq.most_common(40):
+            if count < 2:
+                break
+
+            # Skip if any remaining word is still a noise word
+            term_words = term.split()
+            if any(w in self.NOISE_WORDS for w in term_words):
+                continue
+
+            # Skip very common English phrases
+            if term in {"can be", "such as", "used to", "based on",
+                        "in order", "as well", "due to", "need to",
+                        "able to", "want to", "how to"}:
+                continue
+
+            key = self._normalize_name(term)
+            if key not in existing_keys:
+                self._add_concept(concepts, term.title(), "", "tfidf")
+
+    def _extract_first_use_terms(self, text: str, concepts: dict):
+        """
+        Fallback 3: Extract capitalized multi-word terms on their first use.
+        e.g. "The Fourier Transform converts..." → "Fourier Transform"
+        """
+        seen = set()
+        existing_keys = set(concepts.keys())
+        added = 0
+
+        for match in self.FIRST_USE_RE.finditer(text):
+            if added >= 10:
+                break
+
+            term = match.group(1).strip()
+            key = self._normalize_name(term)
+
+            if key in seen or key in existing_keys:
+                continue
+            seen.add(key)
+
+            # Skip if first word is a noise word
+            first_word = term.split()[0].lower()
+            if first_word in self.FIRST_USE_NOISE or first_word in self.NOISE_WORDS:
+                continue
+
+            # Must appear at least twice in the text
+            if text.lower().count(term.lower()) >= 2:
+                self._add_concept(concepts, term, "", "first_use")
+                added += 1
+
     def _count_mentions(self, text: str, concepts: dict):
-        """Count how many times each concept appears in the text."""
+        """
+        Count how many times each concept appears in the text.
+
+        Optimized: pre-computes word frequency once, then uses dict
+        lookup for single-word concepts instead of repeated .count()
+        over the full text (which is O(L) per concept).
+        """
         text_lower = text.lower()
+
+        # Build a word frequency map once — O(L)
+        word_freq = Counter(re.findall(r'\b\w+\b', text_lower))
+
         for key, concept in concepts.items():
             name_lower = concept["name"].lower()
-            concept["mentions"] = text_lower.count(name_lower)
+            if ' ' in name_lower or '-' in name_lower:
+                # Multi-word: must use substring count (unavoidable)
+                concept["mentions"] = text_lower.count(name_lower)
+            else:
+                # Single-word: O(1) dict lookup
+                concept["mentions"] = word_freq.get(name_lower, 0)
 
     def _rank_importance(self, concepts: dict):
         """

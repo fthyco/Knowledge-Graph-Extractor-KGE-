@@ -141,12 +141,23 @@ class IntelligenceEngine:
         return concepts
 
     def _compute_sequence_similarity(self, seq_a: List[str], seq_b: List[str]) -> float:
-        """Calculate SequenceMatcher ratio between two lists of strings."""
+        """
+        Calculate SequenceMatcher ratio between two lists of strings.
+
+        For single-element lists (e.g. book titles), compares the actual
+        strings character-by-character. For multi-element lists (e.g.
+        chapter title sequences), compares the list items as units.
+        """
         if not seq_a and not seq_b:
             return 1.0
         if not seq_a or not seq_b:
             return 0.0
-            
+
+        # For single-element lists, compare the strings directly
+        if len(seq_a) == 1 and len(seq_b) == 1:
+            matcher = difflib.SequenceMatcher(None, seq_a[0], seq_b[0])
+            return matcher.ratio()
+
         matcher = difflib.SequenceMatcher(None, seq_a, seq_b)
         return matcher.ratio()
 
