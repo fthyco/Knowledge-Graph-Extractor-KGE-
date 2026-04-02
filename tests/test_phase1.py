@@ -42,7 +42,7 @@ def test_dependency_mapper_comparison_edges():
         f"Expected >= 1 comparison edges, got {len(comparison_edges)}. "
         f"Bug fix for _match_concept_edge may not be working."
     )
-    print("[DEP MAPPER] PASSED ✓\n")
+    print("[DEP MAPPER] PASSED\n")
 
 
 def test_dependency_mapper_empty_text():
@@ -55,7 +55,7 @@ def test_dependency_mapper_empty_text():
     assert result["edges"] == []
     assert result["cross_references"] == []
     assert result["concept_clusters"] == []
-    print("[DEP MAPPER EMPTY] PASSED ✓\n")
+    print("[DEP MAPPER EMPTY] PASSED\n")
 
 
 def test_dependency_mapper_vs_pattern():
@@ -77,7 +77,7 @@ def test_dependency_mapper_vs_pattern():
         print(f"  {e['from']} --[{e['type']}]--> {e['to']}")
 
     assert len(vs_edges) >= 1, f"Expected >= 1 comparison edge from 'vs' pattern"
-    print("[VS PATTERN] PASSED ✓\n")
+    print("[VS PATTERN] PASSED\n")
 
 
 def test_analysis_caching():
@@ -118,7 +118,7 @@ def test_analysis_caching():
         missing = storage.get_cached_analysis("book123", "nonexistent")
         assert missing is None, "Non-existent analysis should return None"
 
-        print("[ANALYSIS CACHE] PASSED ✓\n")
+        print("[ANALYSIS CACHE] PASSED\n")
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -132,7 +132,7 @@ def test_ingester_helper_methods_exist():
     assert hasattr(Ingester, "_analyze_and_save_chapters"), "Missing _analyze_and_save_chapters"
     assert hasattr(Ingester, "_build_knowledge_map"), "Missing _build_knowledge_map"
 
-    print("[INGESTER HELPERS] PASSED ✓\n")
+    print("[INGESTER HELPERS] PASSED\n")
 
 
 def test_chapter_analysis_error_recovery():
@@ -181,7 +181,7 @@ def test_chapter_analysis_error_recovery():
             print(f"  Ch {ch.number}: concepts={len(saved.get('concepts', []))}, "
                   f"formulas={len(saved.get('formulas', []))}")
 
-        print("[ERROR RECOVERY] PASSED ✓\n")
+        print("[ERROR RECOVERY] PASSED\n")
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -202,5 +202,5 @@ if __name__ == "__main__":
     test_chapter_analysis_error_recovery()
 
     print("=" * 60)
-    print("ALL PHASE 1 TESTS PASSED ✓")
+    print("ALL PHASE 1 TESTS PASSED")
     print("=" * 60)

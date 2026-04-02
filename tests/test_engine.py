@@ -27,7 +27,7 @@ def test_concept_extraction_bold_heavy():
     assert any("b-tree" in n for n in names), f"Should find B-Tree, got {names}"
     assert any("write-ahead log" in n or "wal" in n for n in names), \
         f"Should find WAL, got {names}"
-    print(f"[BOLD HEAVY] Found {len(result)} concepts — PASSED ✓")
+    print(f"[BOLD HEAVY] Found {len(result)} concepts -- PASSED")
 
 
 def test_concept_extraction_no_formatting():
@@ -43,7 +43,7 @@ def test_concept_extraction_no_formatting():
     )
     result = ce.extract(text)
     assert len(result) > 0, "Should find concepts using fallback mechanisms"
-    print(f"[NO FORMATTING] Found {len(result)} concepts — PASSED ✓")
+    print(f"[NO FORMATTING] Found {len(result)} concepts -- PASSED")
 
 
 def test_concept_extraction_math_book():
@@ -58,7 +58,7 @@ def test_concept_extraction_math_book():
     """
     result = ce.extract(text)
     assert len(result) >= 2, f"Should find theorem/definition concepts, got {len(result)}"
-    print(f"[MATH BOOK] Found {len(result)} concepts — PASSED ✓")
+    print(f"[MATH BOOK] Found {len(result)} concepts -- PASSED")
 
 
 def test_dependency_comparison_detection():
@@ -77,7 +77,7 @@ def test_dependency_comparison_detection():
         for e in edges
     )
     assert has_comparison, f"Should find compared_with edge, got {edges}"
-    print(f"[COMPARISON] Found {len(edges)} edges — PASSED ✓")
+    print(f"[COMPARISON] Found {len(edges)} edges -- PASSED")
 
 
 def test_dependency_mapper_no_crash_empty():
@@ -86,7 +86,7 @@ def test_dependency_mapper_no_crash_empty():
     result = dm.map("", [])
     assert "edges" in result, "Should return dict with edges key"
     assert result["edges"] == [], f"Should have 0 edges, got {result['edges']}"
-    print("[EMPTY TEXT] No crash — PASSED ✓")
+    print("[EMPTY TEXT] No crash -- PASSED")
 
 
 def test_density_math_heavy():
@@ -104,7 +104,7 @@ def test_density_math_heavy():
     stats = da._compute_stats(text)
     types = da._classify(stats)
     assert "math-heavy" in types, f"Should detect math-heavy, got {types}"
-    print(f"[MATH HEAVY] Types: {types} — PASSED ✓")
+    print(f"[MATH HEAVY] Types: {types} -- PASSED")
 
 
 def test_density_proof_heavy():
@@ -125,7 +125,7 @@ def test_density_proof_heavy():
     stats = da._compute_stats(text)
     types = da._classify(stats)
     assert "proof-heavy" in types, f"Should detect proof-heavy, got {types}"
-    print(f"[PROOF HEAVY] Types: {types} — PASSED ✓")
+    print(f"[PROOF HEAVY] Types: {types} -- PASSED")
 
 
 def test_density_problem_set():
@@ -142,7 +142,7 @@ def test_density_problem_set():
     stats = da._compute_stats(text)
     types = da._classify(stats)
     assert "problem-set" in types, f"Should detect problem-set, got {types}"
-    print(f"[PROBLEM SET] Types: {types} — PASSED ✓")
+    print(f"[PROBLEM SET] Types: {types} -- PASSED")
 
 
 def test_formula_extraction_display():
@@ -153,7 +153,7 @@ def test_formula_extraction_display():
     has_emc2 = any("E = mc^2" in f.get("latex", "") or "E=mc^2" in f.get("latex", "")
                     for f in formulas)
     assert has_emc2, f"Should extract E=mc^2, got {[f.get('latex','') for f in formulas]}"
-    print(f"[FORMULA DISPLAY] Found {len(formulas)} formulas — PASSED ✓")
+    print(f"[FORMULA DISPLAY] Found {len(formulas)} formulas -- PASSED")
 
 
 def test_formula_extraction_inline():
@@ -162,7 +162,7 @@ def test_formula_extraction_inline():
     text = "The function $f(x) = x^2$ is a parabola and $g(x) = 2x$ is linear."
     formulas = fe.extract(text)
     assert len(formulas) >= 1, f"Should extract inline formulas, got {len(formulas)}"
-    print(f"[FORMULA INLINE] Found {len(formulas)} formulas — PASSED ✓")
+    print(f"[FORMULA INLINE] Found {len(formulas)} formulas -- PASSED")
 
 
 # ─── Run all tests ──────────────────────────────────────────────
@@ -184,5 +184,5 @@ if __name__ == "__main__":
     test_formula_extraction_inline()
 
     print("\n" + "=" * 60)
-    print("ALL ENGINE TESTS PASSED ✓")
+    print("ALL ENGINE TESTS PASSED")
     print("=" * 60)

@@ -33,7 +33,7 @@ def test_concept_fallback_tfidf():
         print(f"  {c['name']} ({c['importance']}) via {c.get('sources', [])}")
 
     assert len(result) >= 1, "Should find at least 1 concept from frequency analysis"
-    print("[TFIDF FALLBACK] PASSED ✓\n")
+    print("[TFIDF FALLBACK] PASSED\n")
 
 
 def test_concept_fallback_theorem_blocks():
@@ -65,7 +65,7 @@ def test_concept_fallback_theorem_blocks():
     print(f"  Found Lagrange: {has_lagrange}")
 
     assert len(result) >= 2, "Should find concepts from theorem/definition blocks"
-    print("[THEOREM BLOCKS] PASSED ✓\n")
+    print("[THEOREM BLOCKS] PASSED\n")
 
 
 def test_concept_primary_still_works():
@@ -86,7 +86,7 @@ def test_concept_primary_still_works():
 
     assert any("b-tree" in n for n in names), "Should find B-Tree from bold"
     assert any("lsm-tree" in n or "lsm" in n for n in names), "Should find LSM-Tree"
-    print(f"[PRIMARY EXTRACTION] Found {len(result)} concepts - PASSED ✓\n")
+    print(f"[PRIMARY EXTRACTION] Found {len(result)} concepts - PASSED\n")
 
 
 def test_density_proof_heavy():
@@ -120,7 +120,7 @@ def test_density_proof_heavy():
     print(f"  proof_ratio={stats['proof_ratio']:.2f}, proof_count={stats['proof_count']}")
 
     assert "proof-heavy" in types, f"Should detect proof-heavy, got {types}"
-    print("[PROOF-HEAVY] PASSED ✓\n")
+    print("[PROOF-HEAVY] PASSED\n")
 
 
 def test_density_problem_set():
@@ -151,7 +151,7 @@ def test_density_problem_set():
     print(f"  problem_ratio={stats['problem_ratio']:.2f}, problem_count={stats['problem_count']}")
 
     assert "problem-set" in types, f"Should detect problem-set, got {types}"
-    print("[PROBLEM-SET] PASSED ✓\n")
+    print("[PROBLEM-SET] PASSED\n")
 
 
 def test_density_backward_compat():
@@ -176,7 +176,7 @@ def test_density_backward_compat():
 
     print(f"[BACKWARD COMPAT] Math text types: {types}")
     assert "math-heavy" in types, f"Should still detect math-heavy, got {types}"
-    print("[BACKWARD COMPAT] PASSED ✓\n")
+    print("[BACKWARD COMPAT] PASSED\n")
 
 
 def test_metadata_subject_detection():
@@ -202,7 +202,7 @@ def test_metadata_subject_detection():
     )
     print(f"[SUBJECT MATH] Detected: {result2['subject']}")
     assert result2["subject"] == "mathematics", f"Expected math, got {result2['subject']}"
-    print("[SUBJECT DETECTION] PASSED ✓\n")
+    print("[SUBJECT DETECTION] PASSED\n")
 
 
 def test_metadata_author_extraction():
@@ -221,7 +221,7 @@ def test_metadata_author_extraction():
     # Year
     assert result["year"] == "2017", f"Expected 2017, got '{result['year']}'"
     print(f"[YEAR] Detected: {result['year']}")
-    print("[AUTHOR EXTRACTION] PASSED ✓\n")
+    print("[AUTHOR EXTRACTION] PASSED\n")
 
 
 def test_metadata_language():
@@ -238,7 +238,7 @@ def test_metadata_language():
     result2 = me.extract(full_text="هذا نص عربي عن الخوارزميات وهياكل البيانات والبرمجة")
     assert result2["language"] == "ar", f"Expected ar, got {result2['language']}"
 
-    print("[LANGUAGE DETECTION] PASSED ✓\n")
+    print("[LANGUAGE DETECTION] PASSED\n")
 
 
 # ─── Run all tests ──────────────────────────────────────────────
@@ -259,5 +259,5 @@ if __name__ == "__main__":
     test_metadata_language()
 
     print("=" * 60)
-    print("ALL PHASE 3 TESTS PASSED ✓")
+    print("ALL PHASE 3 TESTS PASSED")
     print("=" * 60)

@@ -186,8 +186,8 @@ function renderChapterList(chapters) {
   }
 
   dom.chapterList.innerHTML = chapters.map(ch => {
-    const statusIcon = ch.study_status === 'completed' ? '✓'
-      : ch.study_status === 'in_progress' ? '◐' : '○';
+    const statusIcon = ch.study_status === 'completed' ? 'v'
+      : ch.study_status === 'in_progress' ? '~' : 'o';
     const statusClass = `status-${ch.study_status || 'not_started'}`;
     const words = ch.word_count ? `${(ch.word_count / 1000).toFixed(1)}k` : '';
 
@@ -220,7 +220,7 @@ function renderChapterList(chapters) {
 
 async function toggleStudyStatus(bookId, chapterId, statusEl) {
   const cycle = { 'not_started': 'in_progress', 'in_progress': 'completed', 'completed': 'not_started' };
-  const icons = { 'not_started': '○', 'in_progress': '◐', 'completed': '✓' };
+  const icons = { 'not_started': 'o', 'in_progress': '~', 'completed': 'v' };
 
   const current = statusEl.classList.contains('status-completed') ? 'completed'
     : statusEl.classList.contains('status-in_progress') ? 'in_progress' : 'not_started';
@@ -517,7 +517,7 @@ function showUploadOverlay(title, step, percent) {
   // Reset pipeline icons
   $$('.pipe-step').forEach(el => {
     el.classList.remove('active', 'done', 'error');
-    el.querySelector('.pipe-icon').textContent = '○';
+    el.querySelector('.pipe-icon').textContent = 'o';
   });
   $$('.pipe-connector').forEach(el => el.classList.remove('done'));
 
@@ -574,12 +574,12 @@ function updatePipelineStep(currentStep) {
 
     if (i < currentIdx) {
       el.classList.add('done');
-      icon.textContent = '✓';
+      icon.textContent = 'v';
     } else if (i === currentIdx) {
       el.classList.add('active');
-      icon.textContent = '◉';
+      icon.textContent = '*';
     } else {
-      icon.textContent = '○';
+      icon.textContent = 'o';
     }
   });
 
@@ -598,7 +598,7 @@ function completeProcess(success) {
     steps.forEach(el => {
       el.classList.remove('active');
       el.classList.add('done');
-      el.querySelector('.pipe-icon').textContent = '✓';
+      el.querySelector('.pipe-icon').textContent = 'v';
     });
     connectors.forEach(el => el.classList.add('done'));
 
@@ -609,7 +609,7 @@ function completeProcess(success) {
     if (activeStep) {
       activeStep.classList.remove('active');
       activeStep.classList.add('error');
-      activeStep.querySelector('.pipe-icon').textContent = '✗';
+      activeStep.querySelector('.pipe-icon').textContent = 'x';
     }
   }
 

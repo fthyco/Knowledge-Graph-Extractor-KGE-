@@ -1,12 +1,10 @@
-# PDF Reader, Organizer & Study Engine
+# PDF Reader & Study Prompt Engine
 
-A comprehensive system that extracts text from PDFs (books, papers, slides) using AI-powered OCR, reconstructs broken $\LaTeX$ mathematics, organizes documents into a structured library by chapters, and runs a fully **deterministic analysis engine** to generate optimized study prompts for Large Language Models.
+A local-first system that ingests PDF textbooks, organizes them into a structured library by chapters, and runs a fully **deterministic analysis engine** to generate optimized study prompts for any Large Language Model.
 
 All processing happens **100% locally** on your machine. No API calls. No cloud dependencies. No recurring costs.
 
-![License](https://img.shields.io/badge/License-MIT-green)
-![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
-![Chrome Extension](https://img.shields.io/badge/Chrome-Extension_v3-4285F4?logo=googlechrome&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![SQLite](https://img.shields.io/badge/Storage-SQLite_WAL-003B57?logo=sqlite&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi&logoColor=white)
 
@@ -17,13 +15,12 @@ All processing happens **100% locally** on your machine. No API calls. No cloud 
 - [Why This Exists](#why-this-exists)
 - [Key Features](#key-features)
 - [System Architecture](#system-architecture)
-- [Component Breakdown](#detailed-component-breakdown)
-  - [Backend Bridge](#1-the-backend-bridge-marker_bridgepy)
-  - [LaTeX Reconstruction](#2-mathematics-reconstruction-latexfix)
-  - [Library System](#3-the-library-system-warehouse)
-  - [Deterministic Engine](#4-deterministic-analysis-engine-engine)
-  - [Library Intelligence](#5-library-intelligence-enginelibrary_intelligencepy)
-  - [Frontend UI](#6-frontend-ui-chrome-extension)
+- [Component Breakdown](#component-breakdown)
+  - [Server](#1-server-serverpy)
+  - [Warehouse](#2-warehouse-warehouse)
+  - [Deterministic Engine](#3-deterministic-analysis-engine-engine)
+  - [Library Intelligence](#4-library-intelligence)
+  - [Web UI](#5-web-ui-web)
 - [Why Not Just Send the PDF to ChatGPT?](#why-not-just-send-the-pdf-to-chatgpt)
 - [Study Modes](#study-modes)
 - [API Reference](#api-reference)
@@ -41,251 +38,195 @@ If you've ever tried to study from a textbook PDF using an LLM, you've hit these
 
 | Problem | What happens |
 |---|---|
-| **Broken math** | OCR scrambles matrices, turns `β̂` into garbage, splits equations across lines |
 | **Lost structure** | The LLM gets a wall of text with no chapter boundaries |
 | **Hallucination** | The model invents definitions instead of quoting the author's |
-| **Token waste** | Sending a 500-page book costs a fortune in tokens — *every single time you ask a question* |
+| **Token waste** | Sending a 500-page book costs a fortune in tokens -- *every single time you ask a question* |
 | **No memory** | The LLM can't cross-reference your other textbooks. It forgets page 50 by page 200 |
 
 This project solves all of them by building a **deterministic intelligence layer** between your PDFs and the LLM:
 
-1. **Precision Extraction** — Uses `marker-pdf` for state-of-the-art layout detection and OCR.
-2. **Mathematical Reconstruction** — The `latexfix` pipeline detects mangled matrices and broken math, reconstructs valid $\LaTeX$, and can even **compute solutions** (e.g., solving the normal equation $\hat{\beta} = (X'X)^{-1}X'y$ via NumPy).
-3. **Semantic Chunking** — Intelligently splits books into logical chapters using Table of Contents, heading patterns, and page-break analysis.
-4. **Deterministic Pre-computation** — Extracts every formula, variable definition, concept, and dependency graph **before** the LLM touches anything.
-5. **Prompt Assembly** — Combines reconstructed text and deterministic metadata into highly structured prompts that eliminate hallucination and reduce token costs by orders of magnitude.
+1. **Precision Extraction** -- Extracts text from PDFs using `marker-pdf` for layout detection or `pypdf` for digital-native content.
+2. **Semantic Chunking** -- Intelligently splits books into logical chapters using heading patterns, Table of Contents detection, and page-break analysis.
+3. **Deterministic Pre-computation** -- Extracts every formula, variable definition, concept, and dependency graph **before** the LLM touches anything.
+4. **Prompt Assembly** -- Combines extracted text and deterministic metadata into highly structured prompts that eliminate hallucination and reduce token costs by orders of magnitude.
+5. **Library Intelligence** -- Cross-references books against each other using TF-IDF cosine similarity to build a persistent knowledge graph.
 
 ---
 
 ## Key Features
 
 ### Intelligent PDF Ingestion
-- AI-powered OCR via `marker-pdf` with GPU acceleration
-- **Smart OCR routing** — pre-classifies pages as digital, scanned, or empty; only applies OCR to pages that actually need it
-- Memory-optimized chunked extraction for 500+ page books
-- Automatic metadata extraction (author, subject) from PDF properties
-- Singleton model loading — first book takes ~15s, subsequent books are instant
-
-### LaTeX Mathematics Reconstruction
-- Detects mangled matrices, broken decimal numbers, and scrambled math from Beamer slides
-- Reconstructs valid `\begin{bmatrix}` syntax automatically
-- **Computational math:** can actually solve matrix equations (normal equations, matrix inverses) and insert the correct $\LaTeX$ result
-- Shape inference: auto-detects column vectors vs. square matrices from variable names
+- Dual-path extraction: fast `pypdf` for digital-native PDFs, `marker-pdf` for scanned content
+- Configurable word-per-page threshold to auto-select the extraction strategy
+- Automatic metadata extraction (author, subject, edition, year, language) from PDF properties and content heuristics
+- Background ingestion with real-time SSE progress streaming to the web UI
 
 ### Library Management
 - SQLite-backed storage with WAL mode for concurrent access
-- Automatic chapter detection (3 strategies: explicit chapters → top-level headings → page breaks)
-- Study status tracking per chapter (`not_started` → `in_progress` → `completed`)
-- Search across your entire book collection
-- Background ingestion with real-time SSE progress streaming
+- Automatic chapter detection using a 3-tier heuristic strategy (explicit chapters, top-level headings, page breaks)
+- Study status tracking per chapter (`not_started` / `in_progress` / `completed`)
+- Configurable control unit (fast-path toggle, PyPDF threshold, export directory)
+- Bulk library import by scanning a `raw_source/` directory
 
-### Deterministic Analysis Engine (6-stage pipeline)
-- **StructureAnalyzer** — Builds a hierarchical heading tree with word counts
-- **ConceptExtractor** — Identifies key terms, acronyms, bold/italic definitions with importance ranking
-- **FormulaExtractor** — Isolates every `$...$` and `$$...$$` block, captures surrounding variable definitions
-- **DependencyMapper** — Finds relationship markers ("depends on", "in contrast to", "generalizes") and builds a concept graph
-- **DensityAnalyzer** — Classifies each section as "math-heavy", "example-heavy", "code-heavy", etc.
-- **LibraryIntelligence** — Cross-references new books against your existing library using TF-IDF cosine similarity
+### Deterministic Analysis Engine (6-Stage Pipeline)
+- **StructureAnalyzer** -- Builds a hierarchical heading tree with word counts
+- **ConceptExtractor** -- Identifies key terms, acronyms, and bold/italic definitions with importance ranking. Falls back to TF-IDF frequency analysis and theorem/definition block detection when formatting is absent
+- **FormulaExtractor** -- Isolates every `$...$` and `$$...$$` block and captures surrounding variable definitions
+- **DependencyMapper** -- Finds relationship markers ("depends on", "in contrast to", "generalizes") and builds a directed concept graph with clusters
+- **DensityAnalyzer** -- Classifies each section as `math-heavy`, `proof-heavy`, `problem-set`, `example-heavy`, `code-heavy`, or `concept-dense`
+- **LibraryIntelligence** -- Cross-references new books against your existing library using TF-IDF cosine similarity
 
 ### 4 Study Modes
-- **Deep Dive** — Comprehensive breakdown of every concept and formula
-- **Exam Prep** — Flashcards, practice problems, common traps
-- **Quick Review** — Condensed cheat-sheet summary
-- **Socratic Dialogue** — Interactive teacher-student conversation format
+- **Deep Dive** -- Comprehensive breakdown of every concept and formula
+- **Exam Prep** -- Flashcards, practice problems, common traps
+- **Quick Review** -- Condensed cheat-sheet summary
+- **Socratic Dialogue** -- Interactive teacher-student conversation format
 
-### Chrome Extension UI
-- One-click PDF → Markdown conversion from any browser tab
-- Full library dashboard with book browsing and chapter selection
-- Beautiful in-browser math rendering via KaTeX
-- Copy-to-clipboard prompt generation
+### Web UI
+- Full library dashboard with sidebar book browser and chapter selection
+- Real-time ingestion pipeline overlay with activity log and elapsed timer
+- Mode selection and one-click prompt generation
+- Copy-to-clipboard and download support for generated prompts
+- Warehouse control unit for configuration management
+- Premium dark theme built with Inter + JetBrains Mono typography
 
 ---
 
 ## System Architecture
 
-The project is split into two halves: a **Chrome Extension** for the UI, and a **FastAPI Python Server** for the heavy lifting.
-
-```mermaid
-graph TD
-    A[Chrome Extension UI] -->|HTTP| B[FastAPI Backend<br>marker_bridge.py :8001]
-    
-    subgraph Backend Pipeline
-        B -->|Raw PDF| PC(Page Classifier)
-        PC -->|Digital pages| C1(marker-pdf<br>text mode)
-        PC -->|Scanned pages| C2(marker-pdf<br>OCR mode)
-        PC -.->|Empty pages| SK[Skip]
-        C1 -->|Markdown| D(latexfix Pipeline)
-        C2 -->|Markdown| D
-        D -->|Clean Markdown| M(Metadata Extractor)
-        M -->|Author/Subject| E(Warehouse Ingester)
-        E -->|Split & Structure| F[(SQLite Warehouse)]
-        F -->|Chapter Text| G(6-Stage Engine)
-        G -->|Analysis + Text| H(Prompt Assembler)
-        F -.->|All Books| I(Library Intelligence)
-        I -.->|Knowledge Map| F
-    end
-    
-    H -->|Optimized Prompt| A
-```
-
-### Data Flow
-
 ```
 PDF File
-  │
-  ├─ Page Classifier ► Pre-scan pages (milliseconds)
-  │    ├─ DIGITAL (≥50 words) → text extraction, no OCR
-  │    ├─ SCANNED (has images, <50 words) → full OCR
-  │    └─ SKIP (empty, no images) → skipped entirely
-  │
-  ├─ marker-pdf ──► Raw Markdown (smart OCR per page type)
-  │
-  ├─ latexfix ────► Clean Markdown (valid LaTeX, solved matrices)
-  │
-  ├─ Ingester ────► Chapter Detection (3 strategies)
-  │                  ├─ Explicit "Chapter N" headings
-  │                  ├─ Top-level # headings
-  │                  └─ Page-break fallback
-  │
-  ├─ Per-Chapter (parallel) ──► FormulaExtractor → extract $formulas$
-  │                             ConceptExtractor → extract key terms
-  │                             StructureAnalyzer → build heading tree
-  │
-  ├─ Storage ─────► SQLite (books, chapters, markdown, prompts, analysis)
-  │
-  └─ Intelligence ► TF-IDF + SequenceMatcher cross-referencing
+  |
+  +-- Ingester ------> pypdf fast path (digital-native, >= threshold w/p)
+  |                    OR marker-pdf (scanned / sparse content)
+  |
+  +-- Metadata ------> Auto-extract author, subject, edition, year, language
+  |
+  +-- Chapter Detection (3 strategies)
+  |     +-- Explicit "Chapter N" / "Part N" headings
+  |     +-- Top-level # headings (filtering TOC, preface, index)
+  |     +-- Page-break fallback (--- separators)
+  |
+  +-- Per-Chapter Analysis (parallel, ThreadPoolExecutor)
+  |     +-- StructureAnalyzer --> heading tree
+  |     +-- ConceptExtractor  --> key terms + definitions
+  |     +-- FormulaExtractor  --> LaTeX blocks + variable context
+  |
+  +-- Storage ----------> SQLite WAL (books, chapters, prompts, analysis)
+  |
+  +-- Library Intelligence (background thread)
+  |     +-- TF-IDF + SequenceMatcher cross-referencing
+  |
+  +-- Prompt Assembly --> Structured prompt for any LLM
+```
+
+### Request Flow
+
+```
+Browser (Web UI)
+  |
+  +--[HTTP]--> FastAPI Server (localhost:8001)
+                |
+                +-- /warehouse/*  --> Warehouse facade --> Ingester + Storage
+                +-- /engine/*     --> Engine pipeline  --> PromptAssembler
+                +-- /             --> Serves web UI (index.html)
 ```
 
 ---
 
-## Detailed Component Breakdown
+## Component Breakdown
 
-### 1. The Backend Bridge (`marker_bridge.py`)
+### 1. Server (`server.py`)
 
-The central nervous system. A FastAPI server on `localhost:8001` that exposes all endpoints for the Chrome Extension.
+The FastAPI backend that exposes all endpoints for the web UI.
 
 **Key capabilities:**
-- **PDF Conversion** (`POST /convert`): Accepts a PDF, runs `marker-pdf` + `latexfix`, returns Markdown with per-page sections.
-- **Background Ingestion** (`POST /warehouse/upload`): Non-blocking PDF processing with SSE progress streaming. The server stays responsive while processing 500-page books.
+- **Background Ingestion** (`POST /warehouse/upload`): Non-blocking PDF processing with SSE progress streaming. The server stays responsive while processing large books.
 - **Library Scanning** (`POST /warehouse/scan`): Auto-discovers PDFs in the `raw_source/` folder and ingests any new ones.
 - **Engine Analysis** (`POST /engine/analyze/{book}/{ch}`): Runs the 6-stage deterministic pipeline on a chapter.
-- **Prompt Building** (`POST /engine/prompt/{book}/{ch}`): Full pipeline → structured prompt, with caching.
-- **Sync endpoints** run in FastAPI's thread pool so the event loop is never blocked.
+- **Prompt Building** (`POST /engine/prompt/{book}/{ch}`): Full pipeline to structured prompt, with SQLite caching.
+- **Control Unit** (`GET/PATCH /warehouse/config`): Read and update runtime configuration (fast path, thresholds, export directory).
+- Serves the web UI as static files from the `web/` directory.
 
 ---
 
-### 2. Mathematics Reconstruction (`latexfix/`)
-
-When extracting text from academic slides (especially Beamer), matrices and math are often destroyed. The `latexfix` module is a custom end-to-end pipeline to fix this.
-
-| Module | Purpose |
-|---|---|
-| `detector.py` | Regex-based detection of isolated numbers, broken brackets, and mangled tabular data |
-| `pipeline.py` | Orchestrator: cleans broken decimals, detects matrices, manages the full fix pipeline |
-| `matrix_extractor.py` | Converts detected numbers back into valid `\begin{bmatrix}` LaTeX. Can also **compute** matrix operations (inverse, normal equations) via NumPy |
-| `renderer.py` | Handles shape inference (column vector vs. square matrix from name hints), document patching (replacing raw text with LaTeX), and Jupyter display helpers |
-
-**Example:** If the pipeline detects matrices named `X'X` and `X'y`, the `auto_solve` function actually computes $(X'X)^{-1}X'y = \hat{\beta}$ using NumPy and inserts the mathematically correct $\LaTeX$ solution back into your notes.
-
----
-
-### 3. The Library System (`warehouse/`)
+### 2. Warehouse (`warehouse/`)
 
 The warehouse handles ingestion, structuring, and persistent storage of your document library.
 
 | Module | Purpose |
 |---|---|
-| `page_classifier.py` | **Smart OCR router.** Pre-scans PDF pages with `pypdf` to classify as `DIGITAL` (≥50 words), `SCANNED` (images, needs OCR), or `SKIP` (empty). Takes milliseconds even for 500+ page PDFs |
-| `ingester.py` | Full pipeline orchestrator. Singleton marker models, smart page classification, chunked extraction, parallel chapter analysis, background knowledge mapping |
-| `models.py` | Data models: `Book`, `Chapter`, `Concept`, `Formula` — all with `to_dict()` / `from_dict()` serialization |
-| `storage.py` | **SQLite-backed** persistence with WAL mode. Schema: `books`, `chapters`, `markdown`, `prompts`, `analysis`. Batched writes with `auto_commit` control. Auto-migrates from legacy JSON format |
+| `__init__.py` | `Warehouse` facade class -- top-level API for ingestion, book/chapter access, search, and maintenance |
+| `ingester.py` | Full pipeline orchestrator: PDF extraction (dual-path), metadata extraction, chapter detection, parallel analysis, background knowledge mapping |
+| `models.py` | Data models: `Book` and `Chapter` dataclasses with `to_dict()` / `from_dict()` serialization and deterministic ID generation |
+| `storage.py` | SQLite-backed persistence with WAL mode. Schema: `books`, `chapters`, `markdown`, `prompts`, `analysis`. Thread-local connections, batched writes, auto-migration from legacy JSON |
+| `config.py` | `ConfigManager` with JSON-persisted `WarehouseConfig` (fast_path_enabled, pypdf_threshold, export_dir) |
 
-**Ingestion Pipeline (8 Steps):**
+**Ingestion Pipeline:**
 1. Copy PDF to `raw_source/` with hash-based naming
 2. Create book record (status: `processing`)
-3. **Pre-classify pages** — `PageClassifier` scans every page in milliseconds, grouping into digital/scanned/skip
-4. Extract markdown via `marker-pdf` — digital pages skip OCR entirely, scanned pages get full OCR, empty pages are skipped
-5. Apply `latexfix` to reconstruct broken mathematics
-6. Auto-extract metadata (author, subject) from PDF properties + content
-7. Detect chapter boundaries using 3-tier heuristic strategy
-8. Analyze each chapter in parallel (structure, concepts, formulas)
-9. Build Library Intelligence knowledge map (background thread)
-
-**Storage Performance:**
-- Single SQLite file replaces 20+ JSON file reads per `get_chapters()` call
-- WAL mode enables concurrent reads during background processing
-- 8MB cache, foreign key cascading deletes, indexed lookups
-- Batched chapter writes with deferred commits for bulk operations
-- Automatic migration from legacy JSON-file format
+3. Extract markdown -- try `pypdf` fast path first; if words per page is below threshold, fall back to `marker-pdf`
+4. Auto-extract metadata (author, subject, edition, year, language) from PDF properties and content analysis
+5. Detect chapter boundaries using 3-tier heuristic strategy
+6. Analyze each chapter in parallel via `ThreadPoolExecutor` (structure, concepts, formulas)
+7. Mark book as `ready`
+8. Build Library Intelligence knowledge map in background daemon thread
 
 ---
 
-### 4. Deterministic Analysis Engine (`engine/`)
+### 3. Deterministic Analysis Engine (`engine/`)
 
-Instead of making an LLM read the whole chapter and guess, the engine pre-extracts everything deterministically — **no AI needed for the analysis**.
-
-```mermaid
-graph LR
-    A[Chapter Text] --> B[StructureAnalyzer]
-    B --> C[ConceptExtractor]
-    A --> D[FormulaExtractor]
-    C --> E[DependencyMapper]
-    B --> E
-    A --> E
-    B --> F[DensityAnalyzer]
-    C --> F
-    D --> F
-    E --> G[PromptAssembler]
-    F --> G
-    C --> G
-    D --> G
-    B --> G
-    G --> H[Optimized LLM Prompt]
-```
+Instead of making an LLM read the whole chapter and guess, the engine pre-extracts everything deterministically -- **no AI needed for the analysis itself**.
 
 | Stage | Module | What it does |
 |---|---|---|
 | 1 | `structure_analyzer.py` | Converts headings into a hierarchical tree with word counts per section |
-| 2 | `concept_extractor.py` | Identifies key terms, acronyms, bold/italic definitions. Ranks by importance (`high`/`medium`/`low`) based on frequency and formatting |
+| 2 | `concept_extractor.py` | Identifies key terms via bold/italic patterns, `Definition:` / `Theorem:` blocks, and TF-IDF frequency fallback. Ranks by importance (`high`/`medium`/`low`) based on frequency and formatting |
 | 3 | `formula_extractor.py` | Finds all `$...$` and `$$...$$` blocks. Traverses surrounding text to find variable definitions (e.g., "where $m$ is mass") and attaches context |
-| 4 | `dependency_mapper.py` | Scans for relationship keywords ("depends on", "in contrast to", "generalizes", "is a special case of") and builds a directed concept graph with clusters |
-| 5 | `density_analyzer.py` | Classifies each section: "math-heavy", "example-heavy", "code-heavy", "definition-heavy". Tells the LLM *how* to explain each section |
+| 4 | `dependency_mapper.py` | Scans for relationship keywords ("depends on", "in contrast to", "unlike X", "X vs Y") and builds a directed concept graph with clusters |
+| 5 | `density_analyzer.py` | Classifies each section: `math-heavy`, `proof-heavy`, `problem-set`, `example-heavy`, `code-heavy`, `concept-dense`. Tells the LLM *how* to explain each section |
 | 6 | `prompt_assembler.py` | Combines everything into a structured prompt with headers, concept lists, formula sheets, dependency graphs, and mode-specific instructions |
+
+Additional modules:
+- `metadata_extractor.py` -- Heuristic-based extraction of author, subject, edition, year, and language from PDF metadata and first-page text
+- `library_intelligence.py` -- Cross-book similarity matching (see below)
 
 ---
 
-### 5. Library Intelligence (`engine/library_intelligence.py`)
+### 4. Library Intelligence
 
-When you add a new book, the Intelligence Engine compares it against every book already in your warehouse — **fully offline, fully deterministic**.
+When you add a new book, the Intelligence Engine compares it against every book already in your warehouse -- **fully offline, fully deterministic**.
 
 **Three similarity dimensions:**
+
 | Dimension | Algorithm | What it measures |
 |---|---|---|
 | Name Similarity | `SequenceMatcher` | How similar the book titles are (character-level) |
 | Structure Similarity | `SequenceMatcher` | How similar the ordered chapter title sequences are |
 | Concept Overlap | TF-IDF Cosine Similarity | How many extracted concepts are shared (weighted by rarity) |
 
-**Weighted scoring:** `total = 0.2 × name + 0.3 × structure + 0.5 × concept`
+**Weighted scoring:** `total = 0.2 x name + 0.3 x structure + 0.5 x concept`
 
 The concept score is weighted highest because two books can have completely different titles and chapter orders but cover the same material. The engine builds IDF across your entire library corpus, so rare shared concepts score much higher than common ones.
 
-**Result:** When generating a study prompt, the `PromptAssembler` automatically includes cross-references to related books in your library — e.g., *"For more on this concept, see Chapter 9 of Linear Algebra Done Right (Score: 0.73)"*.
-
 ---
 
-### 6. Frontend UI (Chrome Extension)
+### 5. Web UI (`web/`)
 
-The user interface lives in your browser as a Chrome Extension (Manifest V3).
+A self-contained browser-based interface served by the FastAPI backend at the root URL.
 
 | File | Purpose |
 |---|---|
-| `popup.html` / `popup.js` | Lightweight popup for quick PDF → Markdown conversion from any browser tab |
-| `organizer.html` / `organizer.js` / `organizer.css` | Full-page study dashboard: book library, chapter browser, markdown viewer, prompt generator |
-| `math-utils.js` | KaTeX-based math rendering for beautiful in-browser equation display |
-| `markdown.js` | Client-side markdown-to-HTML conversion with LaTeX support |
-| `parser.js` | Parsing utilities for splitting and processing extracted text |
-| `content.js` / `marker-client.js` | Grabs PDF binary from the active Chrome tab and proxies it to the local FastAPI backend |
-| `styles.css` | Core extension styling |
+| `index.html` | Application shell: sidebar, chapter list, prompt view, upload overlay, control unit overlay |
+| `app.js` | Full client-side controller: library browsing, SSE progress tracking, mode selection, prompt generation, copy/download, study status management |
+| `styles.css` | Premium dark theme with CSS custom properties, glassmorphism overlays, smooth transitions, and JetBrains Mono for code/prompt display |
+
+**UI Features:**
+- Sidebar book browser with chapter count badges
+- Pipeline progress overlay with step-by-step indicators and live activity log
+- 4 study mode selector (Deep Dive, Exam Prep, Quick Review, Socratic)
+- Prompt output panel with word/token count, copy-to-clipboard, and file download
+- Control Unit settings panel (fast ingestion toggle, PyPDF threshold, export directory, danger zone)
 
 ---
 
@@ -323,10 +264,10 @@ The engine is **100% deterministic**. Given the same PDF, it produces the exact 
 
 | Mode | Best for | What the LLM produces |
 |---|---|---|
-| **Deep Dive** | First pass through dense material | Chapter overview → every concept explained with analogies → formula walkthroughs with worked examples → concept connections → practical applications → key takeaways |
-| **Exam Prep** | Test preparation | Flashcard-format definitions → formula reference sheet → 10-15 conceptual questions with answers → 5-8 application problems → compare & contrast → common exam traps |
-| **Quick Review** | Revision before class | 3-sentence TL;DR → bullet-point concept list → formula cheat sheet → concept map → one-paragraph summary |
-| **Socratic** | Deep understanding | Teacher-student dialogue that follows concept dependencies, works through formulas step-by-step, and builds to synthesis questions |
+| **Deep Dive** | First pass through dense material | Chapter overview, every concept explained with analogies, formula walkthroughs with worked examples, concept connections, practical applications, key takeaways |
+| **Exam Prep** | Test preparation | Flashcard-format definitions, formula reference sheet, 10-15 conceptual questions, 5-8 application problems, compare & contrast, common exam traps |
+| **Quick Review** | Revision before class | 3-sentence TL;DR, bullet-point concept list, formula cheat sheet, concept map, one-paragraph summary |
+| **Socratic** | Deep understanding | Teacher-student dialogue that follows concept dependencies, works through formulas step-by-step, builds to synthesis questions |
 
 ---
 
@@ -334,11 +275,11 @@ The engine is **100% deterministic**. Given the same PDF, it produces the exact 
 
 All endpoints are served by the FastAPI backend at `http://localhost:8001`. Interactive docs at `/docs`.
 
-### Core Conversion
+### Health
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/convert` | Convert a PDF to Markdown (with latexfix). Supports `smart_ocr` flag for selective page-level OCR |
-| `POST` | `/latexfix` | Apply latexfix to raw markdown text |
+| `GET` | `/` | Serve the web UI (or API info if web/ is missing) |
+| `GET` | `/health` | Health check |
 
 ### Warehouse (Library Management)
 | Method | Endpoint | Description |
@@ -350,98 +291,96 @@ All endpoints are served by the FastAPI backend at `http://localhost:8001`. Inte
 | `GET` | `/warehouse/books/{id}` | Get book metadata |
 | `GET` | `/warehouse/books/{id}/chapters` | List chapters (metadata only) |
 | `GET` | `/warehouse/books/{id}/chapters/{ch}` | Get chapter with full text |
-| `GET` | `/warehouse/books/{id}/knowledge-map` | Get Library Intelligence matches |
 | `DELETE` | `/warehouse/books/{id}` | Delete a book (cascading) |
-| `GET` | `/warehouse/search?q=...` | Search books by title |
 | `POST` | `/warehouse/scan` | Scan `raw_source/` for new PDFs |
 | `PATCH` | `/warehouse/books/{id}/chapters/{ch}/status` | Update study status |
-| `POST` | `/warehouse/rebuild-knowledge/{id}` | Rebuild knowledge map for a book |
 | `POST` | `/warehouse/clear-errors` | Remove all errored books |
 | `POST` | `/warehouse/clear-all` | Delete entire library |
+| `GET` | `/warehouse/config` | Get current configuration |
+| `PATCH` | `/warehouse/config` | Update configuration (fast_path, threshold, export_dir) |
 
 ### Engine (Analysis & Prompts)
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/engine/modes` | List available study modes |
-| `POST` | `/engine/analyze/{book}/{ch}` | Run 6-stage deterministic analysis |
-| `POST` | `/engine/prompt/{book}/{ch}` | Build optimized study prompt (with caching) |
+| `POST` | `/engine/analyze/{book}/{ch}` | Run 6-stage deterministic analysis (cached) |
+| `POST` | `/engine/prompt/{book}/{ch}` | Build optimized study prompt (cached). Exports to configured directory |
 
 ---
 
 ## Setup & Installation
 
 ### Prerequisites
-- **Python 3.9+**
-- **Google Chrome** (or any Chromium-based browser)
-- **GPU recommended** for faster OCR (works on CPU too, just slower)
+- **Python 3.11+**
+- **GPU recommended** for `marker-pdf` (works on CPU too, just slower)
 
-### 1. Install Backend Dependencies
+### 1. Clone and set up a virtual environment
 
 ```bash
-pip install marker-pdf fastapi uvicorn python-multipart numpy pypdf psutil
+git clone <repo-url> pdf_reader
+cd pdf_reader
+python -m venv .venv
+.venv\Scripts\activate   # Windows
+# source .venv/bin/activate  # macOS/Linux
 ```
 
-### 2. Start the Backend Server
+### 2. Install dependencies
 
 ```bash
-python marker_bridge.py
+pip install marker-pdf fastapi uvicorn python-multipart pypdf
+```
+
+### 3. Start the server
+
+```bash
+python server.py
 ```
 
 You'll see:
 ```
-Starting Marker Bridge on http://localhost:8001
-Docs available at http://localhost:8001/docs
-
-Warehouse endpoints:
-  POST   /warehouse/upload                — Upload a PDF book
-  GET    /warehouse/books                  — List all books
-  ...
-
-Engine endpoints:
-  GET    /engine/modes                     — List study modes
-  POST   /engine/analyze/{book}/{ch}       — Analyze a chapter
-  POST   /engine/prompt/{book}/{ch}        — Build study prompt
+Starting PDF Reader on http://localhost:8001
+API Docs: http://localhost:8001/docs
 ```
 
-### 3. Load the Chrome Extension
+### 4. Open the web UI
 
-1. Open Chrome and navigate to `chrome://extensions/`
-2. Enable **Developer mode** (toggle in top-right corner)
-3. Click **"Load unpacked"**
-4. Select this project folder (the one containing `manifest.json`)
-5. The **PDF to Markdown** icon will appear in your toolbar
+Navigate to `http://localhost:8001` in your browser.
 
 ---
 
 ## How to Use
 
-### Quick PDF Conversion
-1. Open any PDF in Chrome
-2. Click the extension icon in your toolbar
-3. Configure page range (or leave blank for the whole document)
-4. Click **Convert** → Markdown is copied to your clipboard
-
-### Using the Study Organizer
-1. Open the Organizer dashboard from the extension
-2. Upload a book PDF — the backend automatically:
-   - Extracts text with OCR
-   - Reconstructs broken math
-   - Detects and splits chapters
-   - Extracts formulas, concepts, and dependencies
+### Upload a Book
+1. Open `http://localhost:8001` in your browser
+2. Click **Upload PDF** in the sidebar
+3. The backend automatically:
+   - Extracts text (fast pypdf path or marker-pdf fallback)
+   - Detects author, subject, and other metadata
+   - Splits the book into chapters
+   - Extracts formulas, concepts, and dependencies per chapter
    - Cross-references against your existing library
-3. Select a chapter from the sidebar
-4. Choose a study mode: **Deep Dive**, **Exam Prep**, **Quick Review**, or **Socratic**
-5. Click **Generate Study Prompt**
-6. **Copy** the prompt and paste it into ChatGPT, Claude, or Gemini
+4. Watch the live pipeline progress overlay
+
+### Generate a Study Prompt
+1. Select a book from the sidebar
+2. Click **Study** on any chapter
+3. Choose a study mode: **Deep Dive**, **Exam Prep**, **Quick Review**, or **Socratic**
+4. Click **Generate Study Prompt**
+5. **Copy** the prompt and paste it into ChatGPT, Claude, Gemini, or any LLM
 
 ### Bulk Library Import
 1. Place PDF files in the `raw_source/` folder
-2. Click **Scan Library** in the Organizer (or `POST /warehouse/scan`)
+2. Click **Scan Library** in the sidebar
 3. All new PDFs are automatically ingested with progress tracking
 
-### Track Your Study Progress
-- Mark chapters as `not_started`, `in_progress`, or `completed`
+### Track Study Progress
+- Click the status indicator next to any chapter to cycle through `not_started` / `in_progress` / `completed`
 - Status persists across sessions in the SQLite database
+
+### Configure Settings
+- Click **Control Unit** in the sidebar footer
+- Toggle fast ingestion (PyPDF path), adjust word threshold, set export directory
+- **Danger Zone:** clear error logs or wipe the entire library
 
 ---
 
@@ -449,57 +388,43 @@ Engine endpoints:
 
 ```
 pdf_reader/
-├── marker_bridge.py          # FastAPI backend (all endpoints)
-├── manifest.json             # Chrome Extension manifest (v3)
-│
-├── latexfix/                 # LaTeX reconstruction pipeline
-│   ├── __init__.py           # LatexFix entry point
-│   ├── detector.py           # Regex-based broken math detection
-│   ├── pipeline.py           # Orchestrator (clean, detect, fix)
-│   ├── matrix_extractor.py   # Matrix reconstruction + computation
-│   └── renderer.py           # LaTeX rendering + document patching
-│
-├── warehouse/                # Library management system
-│   ├── __init__.py           # Warehouse facade
-│   ├── page_classifier.py   # Smart OCR page classifier (digital/scanned/skip)
-│   ├── ingester.py           # Full PDF → chapters pipeline
-│   ├── models.py             # Book, Chapter, Concept, Formula models
-│   └── storage.py            # SQLite storage (WAL, cached, indexed)
-│
-├── engine/                   # Deterministic analysis engine
-│   ├── __init__.py           # Engine orchestrator
-│   ├── structure_analyzer.py # Heading tree builder
-│   ├── concept_extractor.py  # Key term + definition extractor
-│   ├── formula_extractor.py  # LaTeX formula extractor with context
-│   ├── dependency_mapper.py  # Concept relationship graph builder
-│   ├── density_analyzer.py   # Section type classifier
-│   ├── metadata_extractor.py # PDF metadata extractor (author, subject)
-│   ├── library_intelligence.py # TF-IDF cross-book matching
-│   └── prompt_assembler.py   # Final prompt builder (4 study modes)
-│
-├── popup.html / popup.js     # Chrome extension popup (quick convert)
-├── organizer.html/js/css     # Full study dashboard
-├── math-utils.js             # KaTeX math rendering
-├── markdown.js               # Markdown → HTML conversion
-├── parser.js                 # Text parsing utilities
-├── content.js                # Chrome tab PDF capture
-├── marker-client.js          # Backend communication proxy
-├── styles.css                # Extension core styles
-│
-├── raw_source/               # PDF storage directory
-├── warehouse/data/           # SQLite database (warehouse.db)
-│
-├── tests/                    # Test suite
-│   ├── test_engine.py        # Engine pipeline tests
-│   ├── test_latexfix.py      # LaTeX reconstruction tests
-│   ├── test_library_intelligence.py  # Cross-book matching tests
-│   ├── test_performance.py   # Performance benchmarks
-│   ├── test_phase1.py        # Integration tests (phase 1)
-│   └── test_phase3.py        # Integration tests (phase 3)
-│
-├── icons/                    # Extension icons
-├── lib/                      # Vendored JS libraries (KaTeX, etc.)
-└── STUDY_PROCESS_REFERENCE.md # User-facing study guide
++-- server.py               # FastAPI backend (all endpoints)
++-- README.md                # This file
++-- .gitignore               # Git ignore rules
+|
++-- engine/                  # Deterministic analysis engine
+|   +-- __init__.py          # Engine orchestrator class
+|   +-- structure_analyzer.py    # Heading tree builder
+|   +-- concept_extractor.py     # Key term + definition extractor
+|   +-- formula_extractor.py     # LaTeX formula extractor with context
+|   +-- dependency_mapper.py     # Concept relationship graph builder
+|   +-- density_analyzer.py      # Section type classifier
+|   +-- metadata_extractor.py    # PDF metadata extractor (author, subject, language)
+|   +-- library_intelligence.py  # TF-IDF cross-book matching
+|   +-- prompt_assembler.py      # Final prompt builder (4 study modes)
+|   +-- README.md                # Engine-specific documentation
+|
++-- warehouse/               # Library management system
+|   +-- __init__.py          # Warehouse facade
+|   +-- ingester.py          # Full PDF-to-chapters pipeline
+|   +-- models.py            # Book + Chapter dataclasses
+|   +-- storage.py           # SQLite storage (WAL, cached, indexed)
+|   +-- config.py            # ConfigManager (fast_path, threshold, export_dir)
+|
++-- web/                     # Browser-based UI
+|   +-- index.html           # Application shell
+|   +-- app.js               # Client-side controller
+|   +-- styles.css           # Premium dark theme
+|
++-- tests/                   # Test suite
+|   +-- test_engine.py           # Engine pipeline tests
+|   +-- test_library_intelligence.py  # Cross-book matching tests
+|   +-- test_performance.py      # Performance benchmarks
+|   +-- test_phase1.py           # Phase 1 integration tests
+|   +-- test_phase3.py           # Phase 3 integration tests
+|
++-- raw_source/              # PDF storage directory (git-ignored)
++-- warehouse/data/          # SQLite database + config (git-ignored)
 ```
 
 ---
@@ -510,34 +435,31 @@ The system is optimized for processing large, multi-hundred-page textbooks:
 
 | Optimization | Impact |
 |---|---|
-| **Smart OCR routing** | `PageClassifier` pre-scans pages in milliseconds; digital pages skip OCR entirely, empty pages are skipped — dramatically reduces processing time for digital-native PDFs |
-| **Singleton marker models** | Models loaded once (~15s), all subsequent books skip this cost |
-| **Chunked PDF extraction** | Auto-calculates chunk size based on available RAM; GPU cache cleared between chunks |
-| **Parallel chapter analysis** | `ThreadPoolExecutor(4)` analyzes structure, concepts, and formulas in parallel |
-| **SQLite WAL mode** | Concurrent reads during background processing; 8MB cache |
-| **Background knowledge mapping** | Library Intelligence runs in a daemon thread — ingestion returns instantly |
-| **Prompt caching** | Generated prompts are cached per (book, chapter, mode) — subsequent calls are instant |
+| **Dual-path extraction** | Digital-native PDFs use the fast `pypdf` path (instant); only sparse/scanned PDFs trigger `marker-pdf` |
+| **Configurable threshold** | Words-per-page threshold (default: 50) controls when to skip heavy extraction |
+| **Parallel chapter analysis** | `ThreadPoolExecutor(4)` analyzes structure, concepts, and formulas concurrently |
+| **SQLite WAL mode** | Concurrent reads during background processing; 8MB cache; foreign key cascading |
+| **Background knowledge mapping** | Library Intelligence runs in a daemon thread -- ingestion returns instantly |
+| **Prompt caching** | Generated prompts are cached per (book, chapter, mode) -- subsequent calls are instant |
 | **Analysis caching** | Engine analysis results are cached per (book, chapter) |
-| **Batched storage writes** | `auto_commit=False` mode defers commits for bulk chapter saves; `flush_index()` commits once at the end |
-| **Memory cleanup** | Full markdown released from book object after storage; `gc.collect()` + `torch.cuda.empty_cache()` between chunks |
+| **Batched storage writes** | `auto_commit=False` mode defers commits for bulk chapter saves; `flush_index()` commits once |
+| **Memory cleanup** | Full markdown released from book object after chapter detection to free memory |
 
 ---
 
 ## Testing
 
-Run the full test suite:
+Run individual test modules (no pytest required):
 
 ```bash
-python -m pytest tests/ -v
+python tests/test_engine.py                # Engine pipeline (10 tests)
+python tests/test_phase1.py                # Phase 1 integration (6 tests)
+python tests/test_phase3.py                # Phase 3 integration (9 tests)
+python tests/test_performance.py           # Performance benchmarks (3 tests)
+python tests/test_library_intelligence.py  # Cross-book matching (1 test)
 ```
 
-Individual test modules:
-```bash
-python -m pytest tests/test_engine.py -v          # Engine pipeline
-python -m pytest tests/test_latexfix.py -v         # LaTeX reconstruction
-python -m pytest tests/test_library_intelligence.py -v  # Cross-book matching
-python -m pytest tests/test_performance.py -v      # Performance benchmarks
-```
+All tests run standalone with no external dependencies beyond the project itself.
 
 ---
 
@@ -547,4 +469,4 @@ MIT
 
 ---
 
-*Built to eliminate the gap between raw PDFs and perfect LLM study sessions — because generating knowledge shouldn't cost you a fortune in API calls.*
+*Built to eliminate the gap between raw PDFs and perfect LLM study sessions -- because generating knowledge shouldn't cost you a fortune in API calls.*

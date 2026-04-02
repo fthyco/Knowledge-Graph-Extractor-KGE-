@@ -206,13 +206,13 @@ class Storage:
                 migrated += 1
 
             self._conn.commit()
-            print(f"[Storage] ✓ Migrated {migrated} books to SQLite")
+            print(f"[Storage] OK - Migrated {migrated} books to SQLite")
 
             # Rename old index (keep as backup)
             old_index.rename(self.data_dir / "index.json.bak")
 
         except Exception as e:
-            print(f"[Storage] ⚠ Migration failed: {e}")
+            print(f"[Storage] WARN - Migration failed: {e}")
             # Don't delete old data on failure
 
     # ── Books ───────────────────────────────────────────────

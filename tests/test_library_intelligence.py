@@ -1,4 +1,7 @@
 import unittest
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from engine.library_intelligence import IntelligenceEngine, BookMatch, KnowledgeMap
 
 class TestLibraryIntelligence(unittest.TestCase):

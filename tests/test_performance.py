@@ -31,7 +31,7 @@ def test_concept_extraction_performance():
 
     print(f"[CONCEPT PERF] {len(result)} concepts in {duration:.2f}s for ~60K words")
     assert duration < 3.0, f"Too slow: {duration:.2f}s (limit: 3.0s)"
-    print("[CONCEPT PERF] PASSED ✓\n")
+    print("[CONCEPT PERF] PASSED\n")
 
 
 def test_storage_index_cache_performance():
@@ -61,7 +61,7 @@ def test_storage_index_cache_performance():
 
         print(f"[SQLITE PERF] 50 list_books() in {duration*1000:.1f}ms ({len(idx)} books)")
         assert duration < 0.5, f"Too slow: {duration*1000:.1f}ms (limit: 500ms)"
-        print("[SQLITE PERF] PASSED ✓\n")
+        print("[SQLITE PERF] PASSED\n")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -85,7 +85,7 @@ def test_density_analyzer_performance():
 
     print(f"[DENSITY PERF] Types: {types} in {duration:.2f}s")
     assert duration < 2.0, f"Too slow: {duration:.2f}s (limit: 2.0s)"
-    print("[DENSITY PERF] PASSED ✓\n")
+    print("[DENSITY PERF] PASSED\n")
 
 
 # ─── Run all ────────────────────────────────────────────────
@@ -100,5 +100,5 @@ if __name__ == "__main__":
     test_density_analyzer_performance()
 
     print("=" * 60)
-    print("ALL PERFORMANCE TESTS PASSED ✓")
+    print("ALL PERFORMANCE TESTS PASSED")
     print("=" * 60)

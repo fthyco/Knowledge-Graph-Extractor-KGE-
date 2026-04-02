@@ -152,9 +152,9 @@ class Ingester:
                 title = pdf_file.stem.replace("_", " ").replace("-", " ").title()
                 book = self.ingest(str(pdf_file), title, progress_callback=progress_callback)
                 results.append(book)
-                print(f"[Warehouse] ✓ Ingested: {pdf_file.name}")
+                print(f"[Warehouse] OK - Ingested: {pdf_file.name}")
             except Exception as e:
-                print(f"[Warehouse] ✗ Failed to ingest {pdf_file.name}: {e}")
+                print(f"[Warehouse] FAIL - Failed to ingest {pdf_file.name}: {e}")
 
         return results
 
@@ -320,7 +320,7 @@ class Ingester:
                 ]
                 ch.formulas = formula_extractor.extract(ch.full_text)
             except Exception as e:
-                print(f"[Warehouse] ⚠ Analysis failed for ch {ch.number} "
+                print(f"[Warehouse] WARN - Analysis failed for ch {ch.number} "
                       f"'{ch.title}': {e}")
             return ch
 
@@ -336,7 +336,7 @@ class Ingester:
                 self.storage.save_chapter(ch, auto_commit=False)
                 saved += 1
             except Exception as e:
-                print(f"[Warehouse] ✗ save_chapter failed for ch {ch.number} "
+                print(f"[Warehouse] FAIL - save_chapter failed for ch {ch.number} "
                       f"'{ch.title}' (book_id={ch.book_id}): {e}")
 
         self.storage.flush_index()
@@ -351,7 +351,7 @@ class Ingester:
                 self.storage.save_book(book)
                 print(f"[Perf] Knowledge map: {time.perf_counter() - t0:.1f}s (background)")
             except Exception as e:
-                print(f"[Warehouse] ⚠ Background knowledge map failed: {e}")
+                print(f"[Warehouse] WARN - Background knowledge map failed: {e}")
 
         thread = threading.Thread(target=_build, daemon=True)
         thread.start()
@@ -382,7 +382,7 @@ class Ingester:
             )
             book.similar_books = knowledge_map["matches"]
         except Exception as e:
-            print(f"[Warehouse] ⚠ Knowledge map failed (non-fatal): {e}")
+            print(f"[Warehouse] WARN - Knowledge map failed (non-fatal): {e}")
 
     # ── Store raw PDF ───────────────────────────────────────
 
